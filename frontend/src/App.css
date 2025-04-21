@@ -1,0 +1,243 @@
+/* frontend/src/App.css */
+/* v5 - Action Button Colors & Black Text */
+
+:root {
+  /* Define SPECIFIC colors based on request */
+  --primary-color: #0d6efd;
+  --button-navy-bg: #001f3f;       /* Navy Blue for buttons */
+  --button-navy-hover-bg: #003366; /* Darker Navy */
+  --button-confirm-bg: #d1e7dd;      /* Light Green */
+  --button-confirm-hover-bg: #b6dccf; /* Darker Light Green */
+  --button-cancel-schedule-bg: #cfe2ff; /* Light Blue */
+  --button-cancel-schedule-hover-bg: #b8daff; /* Darker Light Blue */
+  --button-reject-bg: #f8d7da;       /* Light Red */
+  --button-reject-hover-bg: #f1c1c5; /* Darker Light Red */
+
+  --sidebar-hover-bg: var(--button-confirm-bg); /* Use consistent light green */
+  --sidebar-active-bg: var(--button-cancel-schedule-bg); /* Use consistent light blue */
+  --sidebar-bg: #f8f9fa;          /* Very Light Gray (Sidebar/Input Background) */
+  --content-bg: #ffffff;          /* White (Content/Header/Table Header Background) */
+  --border-color: #dee2e6;        /* Medium Gray (Borders) */
+  --text-black: #000000;          /* Black Text */
+  --text-white: #ffffff;          /* White Text */
+  --text-dark-gray: #343a40;      /* Dark Gray Text */
+  --text-medium-gray: #495057;    /* Medium Gray Text */
+  --text-light-gray: #6c757d;     /* Light Gray Text (Placeholders) */
+
+  /* Shadows */
+  --box-shadow-sm: 0 .125rem .25rem rgba(0,0,0,.075);
+  --box-shadow: 0 .5rem 1rem rgba(0,0,0,.15);
+}
+
+/* --- Body, Root, Code --- */
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: var(--content-bg); /* Base background white */
+  color: var(--text-black);           /* <<< Default text color BLACK */
+  line-height: 1.5;
+  font-size: 16px; /* Base font size */
+}
+
+#root {
+  display: flex; /* Needed if Layout uses flex */
+  min-height: 100vh; /* Ensure root takes full height */
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* --- Card Style --- */
+.card-style {
+    background-color: var(--content-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 0.375rem; /* Bootstrap default */
+    box-shadow: var(--box-shadow-sm);
+    padding: 1.5rem; /* Adjust as needed */
+    margin-bottom: 1.5rem; /* Space below cards */
+}
+
+/* --- General Input & Button Styles --- */
+button {
+  cursor: pointer;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="email"],
+input[type="tel"], /* Added tel type */
+input[type="number"], /* Added number type */
+input[type="date"], /* Added date type */
+input[type="time"], /* Added time type */
+input[type="search"],
+textarea,
+select {
+  padding: 0.5rem 0.75rem;
+  font-size: 1rem;
+  border-radius: 0.25rem;
+  border: 1px solid var(--border-color);
+  transition: border-color .15s ease-in-out,box-shadow .15s ease-in-out;
+  line-height: 1.5; /* Consistency */
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="email"]:focus,
+input[type="tel"]:focus,
+input[type="number"]:focus,
+input[type="date"]:focus,
+input[type="time"]:focus,
+input[type="search"]:focus,
+textarea:focus,
+select:focus {
+    border-color: #86b7fe;
+    outline: 0;
+    box-shadow: 0 0 0 0.25rem rgba(13,110,253,.25);
+}
+
+/* Input Style: Light Gray BG, Black Text */
+.input-light-gray {
+  background-color: var(--sidebar-bg); /* Very light gray */
+  color: var(--text-black); /* Black text */
+  border: 1px solid var(--border-color); /* Standard border */
+}
+.input-light-gray::placeholder { /* Style placeholder text */
+    color: var(--text-light-gray);
+    opacity: 1; /* Override default opacity */
+}
+.input-light-gray:focus {
+  background-color: var(--content-bg); /* White background on focus */
+  /* Keep bootstrap focus style */
+  border-color: #86b7fe;
+  outline: 0;
+  box-shadow: 0 0 0 0.25rem rgba(13,110,253,.25);
+}
+
+/* Button Style: Navy Blue BG, Black Text */
+.button-navy-blue {
+  background-color: var(--button-navy-bg); /* Navy Blue */
+  color: var(--text-black); /* <<< BLACK TEXT */
+  border: 1px solid var(--button-navy-bg);
+  padding: 0.5rem 1rem;
+  border-radius: 0.25rem;
+  font-weight: 500;
+  transition: background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, color 0.15s ease-in-out;
+  line-height: 1.5; /* Ensure consistent height with inputs */
+}
+.button-navy-blue:hover:not(:disabled) {
+  background-color: var(--button-navy-hover-bg); /* Darker Navy */
+  border-color: var(--button-navy-hover-bg);
+  color: var(--text-black); /* <<< BLACK TEXT */
+}
+.button-navy-blue:disabled {
+  background-color: #adb5bd; /* Lighter gray disabled */
+  border-color: #adb5bd;
+  color: #6c757d;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+
+/* --- Action Button Styles --- */
+.button-action { /* Base style for action buttons */
+  padding: 0.375rem 0.75rem; /* Standard padding */
+  font-size: 0.9rem;
+  border-radius: 0.25rem;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 0.15s ease-in-out, border-color 0.15s ease-in-out, color 0.15s ease-in-out;
+  margin-right: 5px; /* Space between buttons */
+  line-height: 1.5;
+  vertical-align: middle; /* Align nicely if next to text */
+}
+.button-action:disabled { cursor: not-allowed; opacity: 0.65; }
+.action-buttons button:last-of-type { margin-right: 0; } /* Remove margin from last button in a group */
+
+
+/* Light Green Accept/Confirm Button - BLACK TEXT */
+.button-accept, .button-confirm {
+  background-color: var(--button-confirm-bg);
+  color: var(--text-black); /* <<< BLACK TEXT */
+  border-color: #a6d2c1; /* Slightly darker border for definition */
+}
+.button-accept:hover:not(:disabled),
+.button-confirm:hover:not(:disabled) {
+  background-color: var(--button-confirm-hover-bg);
+  border-color: #96c3b3;
+  color: var(--text-black); /* <<< BLACK TEXT */
+}
+.button-accept:disabled,
+.button-confirm:disabled {
+  background-color: var(--button-confirm-bg);
+  border-color: #a6d2c1;
+  color: var(--text-black); /* <<< BLACK TEXT */
+}
+
+/* Light Red Reject Button - BLACK TEXT */
+.button-reject {
+  background-color: var(--button-reject-bg);
+  color: var(--text-black); /* <<< BLACK TEXT */
+  border-color: #ecb8bc; /* Slightly darker border for definition */
+}
+.button-reject:hover:not(:disabled) {
+  background-color: var(--button-reject-hover-bg);
+  border-color: #e3a8ac;
+  color: var(--text-black); /* <<< BLACK TEXT */
+}
+.button-reject:disabled {
+   background-color: var(--button-reject-bg);
+   border-color: #ecb8bc;
+   color: var(--text-black); /* <<< BLACK TEXT */
+}
+
+/* Light Blue Cancel/Pagination Button - BLACK TEXT */
+.button-cancel-schedule {
+  background-color: var(--button-cancel-schedule-bg);
+  color: var(--text-black); /* <<< BLACK TEXT */
+  border-color: #b8daff; /* Slightly darker border */
+}
+.button-cancel-schedule:hover:not(:disabled) {
+  background-color: var(--button-cancel-schedule-hover-bg);
+  border-color: #a3cdf7;
+  color: var(--text-black); /* <<< BLACK TEXT */
+}
+.button-cancel-schedule:disabled {
+  background-color: var(--button-cancel-schedule-bg);
+  border-color: #b8daff;
+  color: var(--text-black); /* <<< BLACK TEXT */
+}
+
+/* General Primary/Secondary/Edit/Save Buttons */
+.button-primary { background-color: var(--primary-color); color: white; border-color: var(--primary-color); }
+.button-primary:hover:not(:disabled) { background-color: #0b5ed7; border-color: #0a58ca;}
+
+.button-secondary { background-color: #6c757d; color: white; border-color: #6c757d;}
+.button-secondary:hover:not(:disabled) { background-color: #5c636a; border-color: #565e64;}
+
+.button-edit { background-color: #ffc107; color: black; border-color: #ffc107; }
+.button-edit:hover:not(:disabled) { background-color: #e0a800; border-color: #d39e00;}
+
+.button-save { background-color: #198754; color: white; border-color: #198754; }
+.button-save:hover:not(:disabled) { background-color: #157347; border-color: #146c43;}
+
+.button-cancel { background-color: #6c757d; color: white; border-color: #6c757d; } /* Edit mode cancel */
+.button-cancel:hover:not(:disabled) { background-color: #5c636a; border-color: #565e64;}
+
+/* Error Message Styling */
+.error-message {
+  color: #dc3545; /* Bootstrap danger color */
+  margin-top: 15px;
+  margin-bottom: 15px;
+  padding: 10px;
+  background-color: #f8d7da;
+  border: 1px solid #f5c2c7;
+  border-radius: 0.25rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+}

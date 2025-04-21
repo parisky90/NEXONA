@@ -1,0 +1,10 @@
+.layout-container {
+  display: flex;
+  min-height: 100vh;
+}
+
+.main-content {
+  flex-grow: 1; /* Takes remaining space */
+  padding: 2rem;
+  overflow-y: auto; /* Allow scrolling if content overflows */
+}

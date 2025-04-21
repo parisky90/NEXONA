@@ -1,0 +1,24 @@
+# Flask Core and Extensions
+Flask>=2.0
+Flask-SQLAlchemy>=3.0
+Flask-Migrate>=4.0
+Flask-Cors>=4.0
+Flask-Login>=0.6
+Flask-Mail>=0.9
+SQLAlchemy>=1.4,<2.1 # Or >=2.0 if models are compatible
+python-dotenv>=0.20
+Werkzeug>=2.0
+
+# Celery and Broker Dependency
+celery[redis]>=5.2
+redis>=4.3
+
+# AWS SDK
+boto3>=1.26
+
+# HTTP Requests (for Textkernel etc.)
+requests>=2.28
+python-dateutil>=2.8 # For flexible date parsing
+
+# Database Driver
+psycopg2-binary>=2.9 # For PostgreSQL

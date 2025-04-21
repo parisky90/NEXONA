@@ -1,0 +1,47 @@
+/* frontend/src/components/SearchBar.css */
+.search-bar-form {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem; /* Adjust gap */
+    margin-bottom: 1.5rem;
+    max-width: 600px; /* Allow slightly wider */
+}
+
+/* Wrapper for input and clear button */
+.search-input-wrapper {
+    position: relative; /* Needed for absolute positioning of clear button */
+    flex-grow: 1; /* Wrapper takes available space */
+    display: flex; /* Align input and button */
+}
+
+.search-input {
+    flex-grow: 1; /* Input takes full width of wrapper */
+    padding-right: 35px; /* Make space for the clear button */
+    /* Inherit other styles from App.css */
+}
+
+.search-button {
+    flex-shrink: 0; /* Prevent button from shrinking */
+    /* Inherit styles from App.css */
+}
+
+.clear-button {
+    position: absolute; /* Position absolutely within the wrapper */
+    right: 5px; /* Position near the right edge */
+    top: 50%; /* Center vertically */
+    transform: translateY(-50%); /* Fine-tune vertical centering */
+    background: transparent;
+    border: none;
+    color: var(--text-color-secondary);
+    font-size: 1.6em; /* Adjust size */
+    line-height: 1;
+    padding: 0 0.5rem;
+    cursor: pointer;
+    z-index: 2;
+    opacity: 0.7;
+    transition: opacity 0.2s, color 0.2s;
+}
+.clear-button:hover {
+    opacity: 1;
+    color: var(--text-color);
+}

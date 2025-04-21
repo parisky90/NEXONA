@@ -1,0 +1,50 @@
+/* frontend/src/components/DashboardSummary.css */
+/* v4 - Horizontal Centered Cards */
+
+.dashboard-summary-container { /* Add a wrapper div */
+  display: flex;
+  justify-content: center; /* Center the row of items */
+  width: 100%; /* Take full width */
+  margin-bottom: 25px; /* Space below the summary */
+}
+
+.dashboard-summary-row { /* This will contain the items */
+  display: flex;
+  flex-wrap: wrap; /* Allow wrapping on smaller screens */
+  gap: 15px; /* Space between items */
+  justify-content: center; /* Center items within the row if they wrap */
+  width: 100%; /* Adjust max-width if needed */
+  max-width: 1100px; /* Optional: Limit max width of the summary row */
+}
+
+.summary-item {
+  background-color: var(--sidebar-bg); /* Very light gray */
+  padding: 15px 20px; /* Slightly adjusted padding */
+  border-radius: 6px;
+  text-align: center;
+  min-width: 130px; /* Slightly wider minimum */
+  flex: 1; /* Allow items to grow/shrink */
+  flex-basis: 140px; /* Suggests a base size */
+  /* Remove max-width here, let flexbox handle distribution */
+  /* max-width: 200px; */
+  box-shadow: var(--box-shadow-sm);
+  border: 1px solid var(--border-color);
+}
+
+.summary-item .count {
+  display: block;
+  font-size: 1.8rem; /* Slightly smaller count */
+  font-weight: 600;
+  color: var(--text-dark-gray);
+  margin-bottom: 3px; /* Less space */
+  line-height: 1.2;
+}
+
+.summary-item .label {
+  display: block;
+  font-size: 0.8rem; /* Smaller label */
+  color: var(--text-medium-gray);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  word-wrap: break-word;
+}

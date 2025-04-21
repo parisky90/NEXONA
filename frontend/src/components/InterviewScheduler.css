@@ -1,0 +1,41 @@
+/* frontend/src/components/InterviewScheduler.css */
+.interview-scheduler {
+    margin-top: 1.5rem;
+    padding: 1.5rem;
+    border: 1px solid var(--accent-color);
+    border-radius: 6px;
+    background-color: var(--bg-color-sidebar);
+}
+.interview-scheduler h4 {
+    margin-top: 0;
+    margin-bottom: 1rem;
+    color: var(--text-color); /* Match regular text color */
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: 0.5rem;
+}
+.scheduler-actions {
+    margin-top: 1.5rem; /* Increased space */
+    display: flex;
+    gap: 1rem;
+    justify-content: flex-end; /* Align buttons to the right */
+}
+
+/* Specific button styles within scheduler */
+.scheduler-actions button[type="submit"] {
+    border-color: var(--success-color);
+    color: var(--success-color);
+}
+ .scheduler-actions button[type="submit"]:hover {
+     background-color: rgba(76, 175, 80, 0.2);
+ }
+
+ .scheduler-actions button[type="button"] {
+     background-color: transparent;
+     border-color: var(--text-color-secondary);
+     color: var(--text-color-secondary);
+ }
+  .scheduler-actions button[type="button"]:hover {
+      background-color: var(--button-hover-bg-color);
+      border-color: var(--text-color);
+      color: var(--text-color);
+  }

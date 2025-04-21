@@ -1,0 +1,107 @@
+/* frontend/src/pages/LoginPage.css */
+/* v2 - Robust Centering & Styling */
+
+/* Ensure html and body take full height for centering */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.login-page-container {
+  /* === Flexbox Centering === */
+  display: flex;
+  justify-content: center; /* Center horizontally */
+  align-items: center;     /* Center vertically */
+  /* ========================= */
+  min-height: 100vh; /* Use viewport height to ensure vertical centering works */
+  width: 100%;
+  background-color: #f8f9fa; /* Lighter gray background */
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+.login-box {
+  background-color: #ffffff;
+  padding: 35px 40px; /* Slightly adjusted padding */
+  border-radius: 8px;
+  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.08); /* Softer shadow */
+  width: 100%;
+  max-width: 400px;
+  text-align: center;
+  box-sizing: border-box;
+  border: 1px solid #e9ecef; /* Subtle border */
+}
+
+.login-box h2 {
+  margin-top: 0; /* Remove default top margin */
+  margin-bottom: 30px; /* Space below heading */
+  color: #212529; /* Darker heading color */
+  font-weight: 600;
+  font-size: 1.5rem; /* Slightly larger heading */
+}
+
+.input-group {
+  margin-bottom: 20px;
+  text-align: left;
+}
+
+.input-group label {
+  display: block;
+  margin-bottom: 6px; /* Slightly less space */
+  color: #495057; /* Standard text color */
+  font-weight: 500;
+  font-size: 0.875rem; /* Standard label size */
+}
+
+.input-group input {
+  /* === Input Size Consistency === */
+  width: 100%;
+  box-sizing: border-box; /* CRITICAL: Include padding/border in width */
+  /* ============================ */
+  padding: 10px 12px; /* Standard input padding */
+  border: 1px solid #ced4da; /* Standard border color */
+  border-radius: 5px; /* Slightly more rounded */
+  font-size: 1rem;
+  line-height: 1.5; /* Ensure consistent height */
+  transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.input-group input:focus {
+  border-color: #86b7fe; /* Bootstrap focus color */
+  outline: 0;
+  box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25); /* Bootstrap focus shadow */
+}
+
+.login-button {
+  width: 100%;
+  padding: 10px 12px; /* Match input padding */
+  background-color: #0d6efd; /* Bootstrap primary blue */
+  color: white;
+  border: 1px solid #0d6efd;
+  border-radius: 5px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease-in-out, border-color 0.15s ease-in-out;
+  margin-top: 15px; /* Space above button */
+}
+
+.login-button:hover:not(:disabled) {
+  background-color: #0b5ed7;
+  border-color: #0a58ca;
+}
+
+.login-button:disabled {
+  background-color: #6c757d; /* Bootstrap secondary color for disabled */
+  border-color: #6c757d;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.error-message {
+  color: #dc3545; /* Bootstrap danger color */
+  margin-top: 15px;
+  font-size: 0.875rem;
+  text-align: left; /* Align error message left */
+}

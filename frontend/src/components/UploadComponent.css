@@ -1,0 +1,95 @@
+/* frontend/src/components/UploadComponent.css */
+/* v2 - Title Styling */
+
+.upload-container {
+  /* Assuming this uses .card-style from App.css or has similar padding/border */
+   margin-bottom: 25px; /* Space below upload section */
+   padding: 1.5rem; /* Example padding if not using card-style */
+   background-color: var(--content-bg);
+   border: 1px solid var(--border-color);
+   border-radius: 0.375rem;
+   box-shadow: var(--box-shadow-sm);
+}
+
+.upload-container h3 {
+  font-size: 1.3rem; /* Bigger */
+  font-weight: 600;  /* Bold */
+  color: var(--text-black); /* Black text */
+  margin-top: 0;
+  margin-bottom: 20px;
+  text-align: left; /* Keep left aligned */
+}
+
+.dropzone {
+  border: 2px dashed var(--border-color);
+  border-radius: 5px;
+  padding: 25px;
+  text-align: center;
+  cursor: pointer;
+  background-color: var(--sidebar-bg); /* Light gray background */
+  color: var(--text-medium-gray);
+  margin-bottom: 15px;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.dropzone.active {
+  border-color: var(--primary-color);
+}
+
+.dropzone p {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.position-input {
+  margin-bottom: 15px;
+  text-align: left; /* Ensure label aligns left */
+}
+
+.position-input label {
+   display: block;
+   margin-bottom: 5px;
+   font-weight: 500;
+   font-size: 0.9rem;
+   color: var(--text-black); /* Black label text */
+}
+
+.position-input input.input-light-gray { /* Target specific input */
+   width: 100%;
+   box-sizing: border-box;
+   /* Styles for light gray input applied via class */
+}
+
+.upload-container button.button-navy-blue { /* Target specific button */
+   /* Styles for navy button applied via class */
+   /* Make button slightly smaller if desired */
+   padding: 0.4rem 0.8rem;
+   font-size: 0.9rem;
+   margin-top: 5px; /* Reduce space above button */
+   /* width: auto; /* Uncomment if you DON'T want full width */
+}
+
+.upload-container .message {
+  margin-top: 15px;
+  padding: 10px;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  text-align: left;
+}
+
+/* Message styles remain the same */
+.upload-container .message.info {
+  background-color: #eef;
+  color: #33a;
+  border: 1px solid #cce;
+}
+.upload-container .message.success {
+  background-color: var(--sidebar-hover-bg);
+  color: #0f5132;
+  border: 1px solid #badbcc;
+}
+.upload-container .message.error {
+  background-color: #f8d7da;
+  color: #842029;
+  border: 1px solid #f5c2c7;
+}

@@ -1,0 +1,72 @@
+/* frontend/src/components/HistoryLog.css */
+
+.history-log {
+  /* Background should come from parent (.card-style) */
+  font-size: 0.9rem;
+}
+
+.no-history {
+    color: var(--text-light-gray);
+    font-style: italic;
+}
+
+.history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 15px 0; /* Margin below list */
+}
+
+.history-item {
+  padding: 8px 5px; /* Slightly less padding */
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap; /* Wrap on small screens */
+  gap: 10px;
+}
+
+.history-item:last-child {
+  border-bottom: none;
+}
+
+.history-status {
+  font-weight: 600;
+  color: var(--text-dark-gray);
+  padding: 3px 8px; /* Slightly more horizontal padding */
+  border-radius: 4px; /* Match other elements */
+  background-color: #e9ecef; /* Light gray background for status */
+  font-size: 0.8rem; /* Smaller status text */
+  white-space: nowrap;
+  margin-right: 10px; /* Space between status and date */
+}
+
+.history-timestamp {
+  color: var(--text-light-gray);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  text-align: right; /* Align date to the right */
+  flex-grow: 1; /* Allow timestamp to take remaining space */
+}
+
+.pagination-controls {
+  display: flex;
+  justify-content: space-between; /* Space out buttons/text */
+  align-items: center;
+  margin-top: 15px;
+  padding-top: 15px; /* More padding above pagination */
+  border-top: 1px solid var(--border-color);
+}
+
+/* Use button-action and passed class (e.g., button-cancel-schedule) */
+.pagination-controls button.button-action {
+   padding: 4px 10px; /* Smaller padding for pagination */
+   font-size: 0.85rem;
+   /* Margin is handled by justify-content and gap on container */
+}
+
+.page-info {
+    font-size: 0.9rem;
+    color: var(--text-medium-gray);
+    margin: 0 10px; /* Add space around page number text */
+}

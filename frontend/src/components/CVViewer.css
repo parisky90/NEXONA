@@ -1,0 +1,71 @@
+/* frontend/src/components/CVViewer.css */
+
+.cv-viewer-container {
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background-color: var(--bg-color-sidebar); /* Background for the viewer area */
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center; /* Center PDF page horizontally */
+  min-height: 400px; /* Minimum height */
+  overflow: hidden; /* Hide potential overflow from pdf viewer itself */
+}
+
+.viewer-status {
+  margin: auto; /* Center loading/error message */
+  color: var(--text-color-secondary);
+  font-style: italic;
+}
+.viewer-status.error {
+    color: var(--accent-color-danger-text-light);
+    background-color: var(--accent-color-danger-bg-light);
+    padding: 1rem;
+    border-radius: 4px;
+    border: 1px solid var(--accent-color-danger);
+}
+
+
+/* react-pdf styles */
+.pdf-document {
+    max-width: 100%; /* Ensure document doesn't overflow container */
+    margin-bottom: 1rem; /* Space before pagination */
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15); /* Add shadow to page */
+}
+
+/* Style the rendered page canvas/layers */
+.react-pdf__Page__canvas,
+.react-pdf__Page__textContent, /* text layer */
+.react-pdf__Page__annotationLayer { /* annotation layer */
+    max-width: 100%;
+    height: auto !important; /* Override potential fixed height issues */
+}
+
+/* Ensure text layer is selectable */
+.react-pdf__Page__textContent {
+    user-select: text; /* Allow text selection */
+}
+
+
+/* Pagination Styles */
+.pagination-controls {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-color-light);
+  width: 100%;
+}
+
+.pagination-controls span {
+  font-size: 0.9em;
+  color: var(--text-color-secondary);
+}
+
+/* Use secondary button styles from App.css */
+.pagination-controls button {
+  padding: 0.4em 0.8em; /* Slightly smaller padding */
+  font-size: 0.9em;
+}

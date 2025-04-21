@@ -1,0 +1,27 @@
+/* frontend/src/components/Header.css */
+/* v4 - Light Theme - No Bottom Border */
+
+.header {
+  background-color: var(--content-bg); /* White background */
+  padding: 0 30px; /* Horizontal padding */
+  height: 60px; /* Standard header height */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  /* border-bottom: 1px solid var(--border-color); */ /* REMOVED */
+  /* box-shadow: var(--box-shadow-sm); */ /* REMOVED */
+  position: sticky; /* Make header sticky */
+  top: 0;
+  z-index: 1000; /* Ensure header stays above content */
+}
+
+.header h1 {
+  margin: 0;
+  font-size: 1.6rem; /* Slightly larger title */
+  font-weight: 600;
+  color: var(--text-black);
+}
+
+.header-actions {
+  /* Styles for user menu, notifications etc. if added later */
+}

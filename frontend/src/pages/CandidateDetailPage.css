@@ -1,0 +1,189 @@
+/* frontend/src/pages/CandidateDetailPage.css */
+
+.candidate-detail-page {
+  padding: 20px;
+}
+
+.back-link {
+    display: inline-block;
+    margin-bottom: 20px;
+    color: var(--primary-color);
+    text-decoration: none;
+    font-weight: 500;
+}
+.back-link:hover {
+    text-decoration: underline;
+}
+
+
+.detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 25px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.detail-header h2 {
+  margin: 0;
+  font-size: 1.8rem;
+  font-weight: 600;
+}
+
+.header-actions button {
+    margin-left: 10px;
+}
+
+/* Example specific button styles if not using globals - adjust as needed */
+/* Using .button-action base class now */
+.button-edit { background-color: #ffc107; color: black; border-color: #ffc107; }
+.button-edit:hover:not(:disabled) { background-color: #e0a800; border-color: #d39e00;}
+
+.button-save { background-color: #198754; color: white; border-color: #198754; }
+.button-save:hover:not(:disabled) { background-color: #157347; border-color: #146c43;}
+
+.button-cancel { background-color: #6c757d; color: white; border-color: #6c757d; }
+.button-cancel:hover:not(:disabled) { background-color: #5c636a; border-color: #565e64;}
+
+.button-primary { background-color: var(--primary-color); color: white; border-color: var(--primary-color); }
+.button-primary:hover:not(:disabled) { background-color: #0b5ed7; border-color: #0a58ca;}
+
+.button-secondary { background-color: #6c757d; color: white; border-color: #6c757d;}
+.button-secondary:hover:not(:disabled) { background-color: #5c636a; border-color: #565e64;}
+
+
+.detail-content {
+  display: flex;
+  gap: 30px; /* Space between columns */
+  flex-wrap: wrap; /* Allow columns to wrap on smaller screens */
+}
+
+.detail-column {
+  flex: 1; /* Allow columns to share space */
+  min-width: 300px; /* Minimum width before wrapping */
+}
+
+.detail-column-left {
+  flex-basis: 55%; /* Give slightly more space to details */
+  order: 1; /* Ensure details are on the left */
+}
+.detail-column-right {
+  flex-basis: 40%;
+  order: 2; /* Ensure CV/History are on the right */
+}
+
+
+.detail-column-left h3,
+.detail-column-right h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  font-size: 1.2rem;
+  font-weight: 600;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-dark-gray);
+}
+
+.info-grid {
+    display: grid;
+    /* Adjust columns for typical info fields */
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 15px 20px; /* Row and Column gap */
+    margin-bottom: 25px;
+}
+
+.info-item {
+    /* Remove background for cleaner look */
+    /* background-color: var(--sidebar-bg); */
+    padding: 5px 0; /* Adjust padding */
+    /* border-radius: 4px; */
+    /* border: 1px solid #e9ecef; */
+}
+
+.info-item label {
+  display: block;
+  font-weight: 600;
+  font-size: 0.8rem;
+  color: var(--text-medium-gray);
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+
+.info-item span {
+  font-size: 0.95rem;
+  color: var(--text-dark-gray);
+  word-wrap: break-word; /* Allow long text to wrap */
+}
+
+.info-item p { /* Style for multiline text like education/experience */
+    margin: 0;
+    font-size: 0.95rem;
+    color: var(--text-dark-gray);
+    white-space: pre-wrap; /* Preserve line breaks */
+    word-wrap: break-word;
+}
+
+.info-item input.input-light-gray,
+.info-item textarea.input-light-gray {
+    width: 100%;
+    box-sizing: border-box;
+    font-size: 0.95rem;
+    /* Inherits styles from .input-light-gray */
+}
+.info-item textarea.input-light-gray {
+    min-height: 80px; /* Give textareas more default height */
+    resize: vertical;
+    line-height: 1.4;
+}
+
+.info-item-full {
+    grid-column: 1 / -1; /* Make item span full width */
+}
+
+
+.notes-display {
+  white-space: pre-wrap;
+  background-color: var(--sidebar-bg); /* Keep light bg for notes display */
+  padding: 10px 12px;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  min-height: 60px;
+  border: 1px solid var(--border-color);
+  color: var(--text-dark-gray);
+}
+
+.action-buttons {
+  margin-top: 30px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-color);
+}
+.action-buttons h4 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.action-buttons button.button-action {
+    margin-bottom: 10px; /* Space below buttons if they wrap */
+    margin-right: 8px; /* Space between buttons */
+}
+
+.cv-viewer-section,
+.history-log-section {
+  margin-bottom: 25px;
+  /* Using card-style now from App.css */
+}
+
+.cv-viewer-section .react-pdf__Page__canvas {
+  max-width: 100%;
+  height: auto !important;
+  border: 1px solid var(--border-color); /* Add border to PDF */
+  box-shadow: var(--box-shadow-sm);
+}
+
+.history-log-section {
+    max-height: 400px; /* Limit history height */
+    overflow-y: auto;
+}

@@ -1,0 +1,52 @@
+# Git files
+.git
+.gitignore
+
+# Docker files
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Python virtual environment
+venv
+.venv
+
+# Python cache files
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.idea
+.vscode
+
+# Secrets file (should NEVER be in the image)
+.env
+
+# Database file (if using SQLite locally for testing, don't copy old DBs)
+*.db
+*.db-journal*
+*.sqlite
+*.sqlite3
+
+# Uploads folder (if created locally during testing)
+UPLOAD_FOLDER/
+
+# Static files collected by some frameworks (if applicable)
+staticfiles/
+
+# Test reports / coverage
+htmlcov/
+.coverage
+*.cover
+.pytest_cache/
+
+# Build artifacts
+dist/
+build/
+*.egg-info/

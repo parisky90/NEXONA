@@ -1,0 +1,48 @@
+# Environment variables
+.env
+backend/.env
+
+# Python cache and compiled files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Python virtual environment (if not using Docker exclusively for dev)
+venv/
+env/
+.venv/
+
+# Frontend dependencies
+frontend/node_modules/
+
+# Frontend build output
+frontend/dist/
+
+# IDE / Editor specific files
+.idea/
+.vscode/
+*.swp
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Log files (if any are generated locally)
+*.log
+
+# Celery beat schedule file (if stored locally)
+celerybeat-schedule.*
+
+# Local database files (if you ever used SQLite fallback)
+*.db
+*.db-journal
+
+# Docker build context temporary files (less common)
+# .dockerignore handles build context, but good to ignore here too
+# docker-compose.override.yml # If you use overrides locally
+
+# Local script we created
+backend/create_admin.py
+backend/set_reminder_prefs.py
+backend/cookies.txt

@@ -1,0 +1,86 @@
+# backend/docker-compose.yml
+services:
+  redis:
+    image: redis:6.2-alpine
+    container_name: cv_redis
+    ports: # Optional: Expose Redis port to host for debugging tools if needed
+      - "6379:6379"
+    volumes:
+     - redis_data:/data
+    # Optional: Add healthcheck for Redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  db:
+    image: postgres:14-alpine
+    container_name: cv_postgres_db
+    environment:
+      POSTGRES_DB: cv_manager_db
+      POSTGRES_USER: cv_manager_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD} # Reads from .env file in the backend directory
+    ports:
+      - "5433:5432" # Expose DB on host port 5433 -> container 5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    # Optional: Add healthcheck for Postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cv_manager_user -d cv_manager_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: . # Build from the Dockerfile in the current directory (backend/)
+    container_name: cv_web_app
+    ports:
+      - "5001:5000" # Expose Flask app on host port 5001 -> container 5000
+    volumes:
+      - .:/app # Mount current directory into /app in container for live code changes
+    env_file:
+      - .env # Load environment variables from .env file
+    environment:
+      # Explicitly set FLASK_APP if needed, though run.py might be default
+      - FLASK_APP=run.py
+      # FLASK_ENV=development is often set in .env, ensure it's consistent
+    depends_on:
+      # Wait for db and redis to be healthy before starting web
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: flask run --host=0.0.0.0 --port=5000 # Run Flask dev server
+
+  worker:
+    build: .
+    container_name: cv_celery_worker
+    volumes:
+      - .:/app # Mount code for Celery worker too
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Command to start Celery worker, pointing to the Celery app instance
+    command: celery -A celery_worker.celery worker --loglevel=INFO
+
+  beat:
+    build: .
+    container_name: cv_celery_beat
+    env_file:
+      - .env
+    depends_on:
+      redis: # Beat only needs Redis to store schedule state (implicitly)
+        condition: service_healthy
+    # --- CORRECTED COMMAND (Removed --scheduler flag) ---
+    command: celery -A celery_worker.celery beat --loglevel=INFO
+    # ----------------------------------------------------
+
+# Define named volumes for data persistence
+volumes:
+  postgres_data:
+  redis_data:

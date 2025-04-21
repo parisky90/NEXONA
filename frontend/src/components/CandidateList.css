@@ -1,0 +1,91 @@
+/* frontend/src/components/CandidateList.css */
+/* v3 - Light Theme Header */
+
+.candidate-list-container {
+  margin-top: 20px;
+}
+
+.candidate-table {
+  width: 100%;
+  border-collapse: collapse; /* Use collapse for cleaner lines */
+  margin-top: 15px;
+  font-size: 0.9rem;
+  box-shadow: var(--box-shadow-sm);
+  border: 1px solid var(--border-color);
+  border-radius: 5px;
+  overflow: hidden; /* Needed for border-radius effect on table */
+}
+
+.candidate-table th,
+.candidate-table td {
+  padding: 12px 15px; /* Consistent padding */
+  text-align: left;
+  border-bottom: 1px solid var(--border-color); /* Lighter border between rows */
+  vertical-align: middle; /* Align cell content vertically */
+}
+
+.candidate-table thead th {
+  background-color: var(--content-bg); /* <<< WHITE background */
+  color: var(--text-medium-gray);      /* Medium gray text for header */
+  font-weight: 600;                    /* Bolder header text */
+  text-transform: uppercase;           /* Optional: Uppercase headers */
+  letter-spacing: 0.5px;               /* Optional: Spacing */
+  border-bottom: 2px solid var(--border-color); /* Thicker bottom border for header */
+  position: sticky; /* Make header sticky within its container if container scrolls */
+  top: 0;           /* Requires the container to have overflow */
+  z-index: 10;      /* Keep header above rows */
+}
+
+.candidate-table tbody tr {
+  background-color: var(--content-bg); /* White row background */
+  transition: background-color 0.15s ease;
+}
+
+/* Remove border from last row for cleaner look with rounded corners */
+.candidate-table tbody tr:last-child td {
+   border-bottom: none;
+}
+
+
+.candidate-table tbody tr:hover {
+  background-color: var(--sidebar-bg); /* Very light gray hover */
+}
+
+/* Make row clickable (if link is applied to row or cell) */
+.candidate-table tbody tr.clickable:hover {
+   cursor: pointer;
+}
+
+
+.candidate-table td button {
+  /* Basic button styling - adjust as needed */
+  margin-right: 5px;
+  padding: 3px 8px;
+  font-size: 0.8rem;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid transparent; /* Base border */
+}
+
+/* Example button styles */
+.candidate-table td button.btn-view {
+  background-color: var(--primary-color);
+  color: white;
+  border-color: var(--primary-color);
+}
+.candidate-table td button.btn-delete {
+   background-color: #dc3545; /* Red */
+   color: white;
+   border-color: #dc3545;
+}
+
+
+/* Link style within table */
+.view-link {
+   color: var(--primary-color);
+   text-decoration: none;
+   font-weight: 500;
+}
+.view-link:hover {
+    text-decoration: underline;
+}
