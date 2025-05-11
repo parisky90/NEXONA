@@ -1,7 +1,7 @@
 /* frontend/src/components/HistoryLog.css */
+/* v2 - Status Background Colors */
 
 .history-log {
-  /* Background should come from parent (.card-style) */
   font-size: 0.9rem;
 }
 
@@ -13,16 +13,16 @@
 .history-list {
   list-style: none;
   padding: 0;
-  margin: 0 0 15px 0; /* Margin below list */
+  margin: 0 0 15px 0;
 }
 
 .history-item {
-  padding: 8px 5px; /* Slightly less padding */
+  padding: 8px 5px;
   border-bottom: 1px solid var(--border-color);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  flex-wrap: wrap; /* Wrap on small screens */
+  flex-wrap: wrap;
   gap: 10px;
 }
 
@@ -32,41 +32,57 @@
 
 .history-status {
   font-weight: 600;
-  color: var(--text-dark-gray);
-  padding: 3px 8px; /* Slightly more horizontal padding */
-  border-radius: 4px; /* Match other elements */
-  background-color: #e9ecef; /* Light gray background for status */
-  font-size: 0.8rem; /* Smaller status text */
+  color: var(--text-black); /* Black text for all status badges */
+  padding: 4px 8px;        /* Adjusted padding */
+  border-radius: 4px;
+  font-size: 0.8rem;
   white-space: nowrap;
-  margin-right: 10px; /* Space between status and date */
+  margin-right: 10px;
+  /* Default background (can be transparent or light gray) */
+  background-color: #e9ecef;
 }
+
+/* --- Status Specific Background Colors --- */
+.history-status.status-needsreview { background-color: var(--status-needsreview-bg); }
+.history-status.status-accepted { background-color: var(--status-accepted-bg); }
+.history-status.status-interested { background-color: var(--status-interested-bg); }
+.history-status.status-interview { background-color: var(--status-interview-bg); }
+.history-status.status-evaluation { background-color: var(--status-evaluation-bg); }
+.history-status.status-offermade, .history-status.status-offer-made { background-color: var(--status-offermade-bg); } /* Handle space */
+.history-status.status-hired { background-color: var(--status-hired-bg); color: var(--text-dark-gray); } /* Darker text for darker green */
+.history-status.status-rejected { background-color: var(--status-rejected-bg); }
+.history-status.status-declined { background-color: var(--status-declined-bg); }
+.history-status.status-processing { background-color: var(--status-needsreview-bg); } /* Use same as needs review */
+.history-status.status-parsingfailed { background-color: var(--status-rejected-bg); } /* Use same as rejected */
+/* Add more status mappings if needed */
+/* --- End Status Specific Background Colors --- */
+
 
 .history-timestamp {
   color: var(--text-light-gray);
   font-size: 0.85rem;
   white-space: nowrap;
-  text-align: right; /* Align date to the right */
-  flex-grow: 1; /* Allow timestamp to take remaining space */
+  text-align: right;
+  flex-grow: 1;
 }
 
 .pagination-controls {
   display: flex;
-  justify-content: space-between; /* Space out buttons/text */
+  justify-content: space-between;
   align-items: center;
   margin-top: 15px;
-  padding-top: 15px; /* More padding above pagination */
+  padding-top: 15px;
   border-top: 1px solid var(--border-color);
 }
 
-/* Use button-action and passed class (e.g., button-cancel-schedule) */
 .pagination-controls button.button-action {
-   padding: 4px 10px; /* Smaller padding for pagination */
+   padding: 4px 10px;
    font-size: 0.85rem;
-   /* Margin is handled by justify-content and gap on container */
+   /* Inherits .button-cancel-schedule style via prop */
 }
 
 .page-info {
     font-size: 0.9rem;
     color: var(--text-medium-gray);
-    margin: 0 10px; /* Add space around page number text */
+    margin: 0 10px;
 }

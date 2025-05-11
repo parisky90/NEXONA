@@ -1,23 +1,39 @@
 /* frontend/src/components/Sidebar.css */
-/* v4 - Specific Light Theme Colors */
+/* v5 - Added Logo Styling */
 
 .sidebar {
-  width: 240px; /* Standard sidebar width */
-  flex-shrink: 0; /* Prevent sidebar from shrinking */
-  background-color: var(--sidebar-bg); /* Very light gray background */
-  color: var(--text-black);            /* Default text Black inside sidebar */
-  padding: 15px 0; /* Vertical padding, no horizontal initially */
-  height: 100vh; /* Full viewport height */
-  position: sticky; /* Make sidebar sticky */
+  width: 240px;
+  flex-shrink: 0;
+  background-color: var(--sidebar-bg);
+  color: var(--text-black);
+  height: 100vh;
+  position: sticky;
   top: 0;
   display: flex;
-  flex-direction: column;
-  border-right: 1px solid var(--border-color); /* Separator border */
-  overflow-y: auto; /* Allow scrolling if content overflows */
+  flex-direction: column; /* Stack logo and nav */
+  border-right: 1px solid var(--border-color);
+  overflow-y: auto;
 }
 
+/* --- Logo Styles --- */
+.sidebar-logo-container {
+    padding: 20px 15px; /* Padding around the logo */
+    text-align: center; /* Center the logo */
+    border-bottom: 1px solid var(--border-color); /* Line below logo */
+    margin-bottom: 10px; /* Space below logo area */
+}
+
+.sidebar-logo {
+    max-width: 80%; /* Adjust size as needed */
+    height: auto; /* Maintain aspect ratio */
+    display: inline-block; /* Needed for text-align center */
+}
+/* --- End Logo Styles --- */
+
+
 .sidebar nav {
-  flex-grow: 1; /* Allow nav to take available space */
+  flex-grow: 1;
+  padding: 0; /* Remove padding from nav if logo container has it */
 }
 
 .sidebar ul {
@@ -27,7 +43,7 @@
 }
 
 .sidebar ul li {
-  margin: 0 10px; /* Add horizontal margin for padding effect */
+  margin: 0 10px; /* Horizontal margin for list items */
 }
 
 /* Styling for BOTH NavLink (<a>) and logout <button> */
@@ -35,51 +51,48 @@
 .sidebar ul li button.logout-button {
   display: flex;
   align-items: center;
-  padding: 10px 15px; /* Inner padding for text */
-  color: var(--text-black); /* <<< Default text BLACK */
+  padding: 10px 15px;
+  color: var(--text-black);
   text-decoration: none;
-  background: none; /* Transparent background */
-  border: none; /* No button border */
+  background: none;
+  border: none;
   cursor: pointer;
   font-size: 0.9rem;
   font-weight: 500;
   text-align: left;
-  width: 100%; /* Full width within the margin */
+  width: 100%;
   box-sizing: border-box;
   transition: background-color 0.15s ease, color 0.15s ease;
-  border-radius: 5px; /* Slightly rounded corners for the background effect */
-  margin-bottom: 4px; /* Small gap between items */
+  border-radius: 5px;
+  margin-bottom: 4px;
 }
 
 /* Hover state for BOTH link and button */
 .sidebar ul li a:hover,
 .sidebar ul li button.logout-button:hover {
-  background-color: var(--sidebar-hover-bg); /* Light green background on hover */
-  color: var(--text-black);                  /* <<< Black text on hover */
+  background-color: var(--sidebar-hover-bg); /* Light green */
+  color: var(--text-black);
 }
 
 /* Active link state (for NavLink) */
 .sidebar ul li a.active-link {
-  background-color: var(--sidebar-active-bg); /* Light blue background for active */
-  color: var(--text-black);                   /* <<< Black text for active */
-  font-weight: 600; /* Make active link slightly bolder */
+  background-color: var(--sidebar-active-bg); /* Light blue */
+  color: var(--text-black);
+  font-weight: 600;
 }
-
-/* Keep active style on hover for active link */
 .sidebar ul li a.active-link:hover {
-   background-color: var(--sidebar-active-bg);
-   color: var(--text-black);
+  background-color: var(--sidebar-active-bg);
+  color: var(--text-black);
 }
 
 
 /* Separator styling */
 .sidebar ul li.separator {
-  margin: 15px 0; /* Vertical margin */
-  padding: 0 10px; /* Padding to contain the hr */
+  margin: 15px 0;
+  padding: 0 10px;
 }
-
 .sidebar ul li.separator hr {
   border: none;
-  border-top: 1px solid var(--border-color); /* Use border color variable */
-  margin: 0; /* Remove default hr margins */
+  border-top: 1px solid var(--border-color);
+  margin: 0;
 }
