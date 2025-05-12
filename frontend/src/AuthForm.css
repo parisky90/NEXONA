@@ -1,0 +1,71 @@
+/* frontend/src/AuthForm.css */
+.auth-container {
+  max-width: 450px;
+  margin: 50px auto;
+  padding: 25px 30px;
+  background-color: var(--content-bg); /* Use your variable */
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: var(--box-shadow); /* Use your variable */
+}
+
+.auth-container h2 {
+  text-align: center;
+  margin-bottom: 25px;
+  color: var(--text-dark-gray);
+  font-weight: 600;
+}
+
+.auth-form .form-group {
+  margin-bottom: 20px;
+}
+
+.auth-form .form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: var(--text-medium-gray);
+}
+
+.auth-form input.input-light-gray { /* Εφαρμόζει το existing style σου */
+  width: 100%;
+  box-sizing: border-box; /* Για να μην ξεχειλίζει το padding */
+}
+
+.auth-form .button-primary.auth-button { /* Εφαρμόζει το existing style σου */
+  width: 100%;
+  padding: 10px 15px;
+  font-size: 1.05rem;
+  margin-top: 10px; /* Λίγο κενό πριν το κουμπί */
+}
+
+.auth-form .error-message {
+  margin-bottom: 15px; /* Ήδη υπάρχει στο App.css, αλλά για σιγουριά */
+  font-size: 0.9rem;
+}
+.auth-form .success-message {
+  margin-bottom: 15px;
+  padding: 10px;
+  background-color: #d1e7dd; /* Light green */
+  border: 1px solid #a3cfbb;
+  color: #0f5132; /* Dark green text */
+  border-radius: 0.25rem;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.auth-link {
+  text-align: center;
+  margin-top: 20px;
+  font-size: 0.9rem;
+}
+
+.auth-link a {
+  color: var(--primary-color);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.auth-link a:hover {
+  text-decoration: underline;
+}
