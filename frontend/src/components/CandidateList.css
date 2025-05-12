@@ -15,6 +15,15 @@
   margin-top: 15px; /* Added margin-top here instead of table */
 }
 
+/* Πρόσθεσε αυτό στο CandidateList.css ή στο App.css */
+.sortable-header {
+  cursor: pointer;
+  user-select: none; /* Για να μην επιλέγεται το κείμενο κατά το κλικ */
+}
+
+.sortable-header:hover {
+  background-color: var(--sidebar-hover-bg); /* Ή ένα άλλο χρώμα hover */
+}
 
 .candidate-table {
   width: 100%;

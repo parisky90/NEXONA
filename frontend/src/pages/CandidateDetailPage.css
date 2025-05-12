@@ -25,6 +25,47 @@
   border-bottom: 1px solid var(--border-color);
 }
 
+/* Πρόσθεσε αυτά στο τέλος του CandidateDetailPage.css */
+
+.offers-section {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid var(--border-color);
+}
+
+.offers-section > label { /* Το label "Offer(s):" */
+  font-size: 1.1em;
+  font-weight: 600;
+  display: block;
+}
+
+.offer-item {
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 15px;
+  margin-bottom: 15px;
+  background-color: #f9f9f9;
+}
+
+.offer-item .info-item {
+  padding: 8px 0; /* Λιγότερο padding μέσα σε κάθε offer item */
+}
+
+.offer-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid #ddd;
+}
+
+.offer-header span {
+  font-weight: bold;
+  font-size: 1rem;
+  color: var(--text-dark-gray);
+}
+
 .detail-header h2 {
   margin: 0;
   font-size: 1.8rem;
