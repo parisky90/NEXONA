@@ -32,6 +32,28 @@ function CandidateDetailPage() {
   const [editMode, setEditMode] = useState(false);
   const [formData, setFormData] = useState({});
 
+  // Ενσωμάτωση της initializeFormData που είχαμε συζητήσει
+  const initializeFormData = (data) => {
+    setFormData({
+        first_name: data.first_name || '',
+        last_name: data.last_name || '',
+        email: data.email || '',
+        phone_number: data.phone_number || '',
+        age: data.age || '',
+        positions: data.positions || [],
+        education: data.education || '',
+        work_experience: data.work_experience || '',
+        languages: data.languages || '',
+        seminars: data.seminars || '',
+        notes: data.notes || '',
+        evaluation_rating: data.evaluation_rating || '',
+        offer_details: data.offer_details || '',
+        interview_datetime: data.interview_datetime || null,
+        interview_location: data.interview_location || '',
+        candidate_confirmation_status: data.candidate_confirmation_status || null,
+    });
+  };
+
   const fetchCandidateData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -41,25 +63,7 @@ function CandidateDetailPage() {
         apiClient.get(`/candidate/${candidateId}/cv_url`)
       ]);
       setCandidate(detailsRes.data);
-      // Αρχικοποίηση του formData με τα δεδομένα του υποψηφίου
-      setFormData({
-          first_name: detailsRes.data.first_name || '',
-          last_name: detailsRes.data.last_name || '',
-          email: detailsRes.data.email || '',
-          phone_number: detailsRes.data.phone_number || '',
-          age: detailsRes.data.age || '',
-          positions: detailsRes.data.positions || [],
-          education: detailsRes.data.education || '',
-          work_experience: detailsRes.data.work_experience || '',
-          languages: detailsRes.data.languages || '',
-          seminars: detailsRes.data.seminars || '',
-          notes: detailsRes.data.notes || '',
-          evaluation_rating: detailsRes.data.evaluation_rating || '',
-          offer_details: detailsRes.data.offer_details || '',
-          interview_datetime: detailsRes.data.interview_datetime || null,
-          interview_location: detailsRes.data.interview_location || '',
-          candidate_confirmation_status: detailsRes.data.candidate_confirmation_status || null,
-      });
+      initializeFormData(detailsRes.data);
       setCvUrl(urlRes.data.cv_url);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to load candidate details.');
@@ -93,7 +97,7 @@ function CandidateDetailPage() {
 
   const handleUpdateStatus = async (newStatus, extraData = {}) => {
     if (!candidate) return;
-    setIsUpdating(true);
+    setIsUpdating(true); // <<<--- ΕΝΑΡΞΗ ACTION LOADING
     setError(null);
     const currentNotes = editMode ? formData.notes : (candidate?.notes || '');
     const payload = {
@@ -107,37 +111,22 @@ function CandidateDetailPage() {
     try {
       const response = await apiClient.put(`/candidate/${candidate.candidate_id}`, payload);
       setCandidate(response.data);
-      // Επαναφορά του formData με τα νέα δεδομένα από το response
-      setFormData({
-        first_name: response.data.first_name || '',
-        last_name: response.data.last_name || '',
-        email: response.data.email || '',
-        phone_number: response.data.phone_number || '',
-        age: response.data.age || '',
-        positions: response.data.positions || [],
-        education: response.data.education || '',
-        work_experience: response.data.work_experience || '',
-        languages: response.data.languages || '',
-        seminars: response.data.seminars || '',
-        notes: response.data.notes || '',
-        evaluation_rating: response.data.evaluation_rating || '',
-        offer_details: response.data.offer_details || '',
-        interview_datetime: response.data.interview_datetime || null,
-        interview_location: response.data.interview_location || '',
-        candidate_confirmation_status: response.data.candidate_confirmation_status || null,
-      });
+      initializeFormData(response.data);
       if (newStatus === 'Rejected') navigate('/rejected');
       if (newStatus === 'Declined') navigate('/declined');
+      if (newStatus === 'NeedsReview' && (candidate.current_status === 'Rejected' || candidate.current_status === 'Declined')) {
+        // console.log("Candidate moved to Needs Review");
+      }
     } catch (err) {
       setError(err.response?.data?.error || `Failed to update status.`);
-    } finally {
-      setIsUpdating(false);
+    } finally { // <<<--- ΔΙΟΡΘΩΣΗ: finally block
+      setIsUpdating(false); // <<<--- ΛΗΞΗ ACTION LOADING ΠΑΝΤΑ
     }
   };
 
   const handleSaveChanges = async () => {
       if (!candidate) return;
-      setIsUpdating(true);
+      setIsUpdating(true); // <<<--- ΕΝΑΡΞΗ ACTION LOADING
       setError(null);
       try {
           const updatePayload = {
@@ -157,30 +146,12 @@ function CandidateDetailPage() {
           };
           const response = await apiClient.put(`/candidate/${candidate.candidate_id}`, updatePayload);
           setCandidate(response.data);
-          // Επαναφορά του formData με τα νέα δεδομένα από το response
-           setFormData({
-                first_name: response.data.first_name || '',
-                last_name: response.data.last_name || '',
-                email: response.data.email || '',
-                phone_number: response.data.phone_number || '',
-                age: response.data.age || '',
-                positions: response.data.positions || [],
-                education: response.data.education || '',
-                work_experience: response.data.work_experience || '',
-                languages: response.data.languages || '',
-                seminars: response.data.seminars || '',
-                notes: response.data.notes || '',
-                evaluation_rating: response.data.evaluation_rating || '',
-                offer_details: response.data.offer_details || '',
-                interview_datetime: response.data.interview_datetime || null,
-                interview_location: response.data.interview_location || '',
-                candidate_confirmation_status: response.data.candidate_confirmation_status || null,
-            });
+          initializeFormData(response.data);
           setEditMode(false);
       } catch (err) {
           setError(err.response?.data?.error || `Failed to save changes.`);
-      } finally {
-          setIsUpdating(false);
+      } finally { // <<<--- ΔΙΟΡΘΩΣΗ: finally block
+          setIsUpdating(false); // <<<--- ΛΗΞΗ ACTION LOADING ΠΑΝΤΑ
       }
   };
 
@@ -189,6 +160,7 @@ function CandidateDetailPage() {
            setError("Please select both date and time for the interview.");
            return;
        }
+       // Το setIsUpdating θα τεθεί (και θα καθαριστεί) από το handleUpdateStatus
        try {
            const localDateTime = new Date(`${date}T${time}:00`);
            if (isNaN(localDateTime.getTime())) {
@@ -206,7 +178,7 @@ function CandidateDetailPage() {
 
   const handleConfirmInterview = () => handleUpdateStatus('Evaluation');
   const handleCancelOrRescheduleInterview = () => handleUpdateStatus('Interested', { interview_datetime: null, interview_location: null, candidate_confirmation_status: null });
-  const handleRejectInterview = () => handleUpdateStatus('Rejected');
+  const handleRejectFromInterview = () => handleUpdateStatus('Rejected'); // Μετονομάστηκε για σαφήνεια
   const handleMakeOffer = () => handleUpdateStatus('OfferMade');
   const handleOfferAccepted = () => handleUpdateStatus('Hired');
   const handleOfferRejected = () => handleUpdateStatus('Declined', { offer_response_date: new Date().toISOString() });
@@ -216,40 +188,40 @@ function CandidateDetailPage() {
     try { return new Date(isoString).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }); } catch { return 'Invalid Date'; }
   };
 
-  if (isLoading) return <div className="loading-placeholder card-style">Loading candidate details...</div>;
-  if (error && !candidate) return <div className="error-message card-style">Error: {error} <button onClick={fetchCandidateData} className="button-action button-secondary">Retry</button></div>;
+  // --- DEBUGGING LOGS ---
+  if (candidate) {
+      console.log("Candidate Data for Detail Page (for button logic):", JSON.stringify(candidate, null, 2));
+      console.log("CANDIDATE CURRENT STATUS (for button logic):", candidate.current_status);
+      console.log("Is status 'Declined' (for button logic)?:", candidate.current_status === 'Declined');
+      console.log("Is status 'Rejected' (for button logic)?:", candidate.current_status === 'Rejected');
+      console.log("Should show Re-evaluate button (for button logic)?:", candidate.current_status && ['Rejected', 'Declined'].includes(candidate.current_status));
+  }
+  // --- END DEBUGGING LOGS ---
+
+  if (isLoading && !candidate) return <div className="loading-placeholder card-style">Loading candidate details...</div>;
+  if (error && !candidate && !isLoading) return <div className="error-message card-style">Error: {error} <button onClick={fetchCandidateData} className="button-action button-secondary">Retry</button></div>;
   if (!candidate) return <div className="card-style">Candidate not found or data unavailable.</div>;
 
   const confirmationDisplayInfo = getConfirmationStatusInfo(candidate.candidate_confirmation_status);
 
   return (
     <div className="candidate-detail-page">
-      <Link to="/dashboard" className="back-link">← Back to Dashboard</Link>
-      {error && <div className="error-message">{error}</div>}
+      <Link to={-1} className="back-link">← Back</Link>
+      {error && !isUpdating && <div className="error-message">{error}</div>}
+      {isUpdating && <div className="loading-placeholder-action card-style" style={{position: 'fixed', top: '10px', left: '50%', transform: 'translateX(-50%)', zIndex: 1001, padding: '10px 20px', background: 'rgba(255,255,255,0.9)', boxShadow: '0 2px 10px rgba(0,0,0,0.2)'}}>Updating...</div>}
+
       <div className="detail-header">
          <h2>{editMode ? `${formData.first_name || ''} ${formData.last_name || ''}`.trim() || 'Edit Candidate' : `${candidate.first_name || ''} ${candidate.last_name || 'Candidate Details'}`.trim()}</h2>
          <div className="header-actions">
              {!editMode ? (
-                 <button onClick={() => setEditMode(true)} className="button-action button-edit">Edit</button>
+                 <button onClick={() => { setEditMode(true); setError(null); }} className="button-action button-edit" disabled={isUpdating}>Edit</button>
              ) : (
                  <>
                     <button onClick={handleSaveChanges} className="button-action button-save" disabled={isUpdating}>{isUpdating ? 'Saving...' : 'Save Changes'}</button>
                     <button onClick={() => {
                         setEditMode(false);
-                        // Επαναφορά του formData από το τρέχον candidate state
-                        setFormData({
-                            first_name: candidate.first_name || '', last_name: candidate.last_name || '',
-                            email: candidate.email || '', phone_number: candidate.phone_number || '',
-                            age: candidate.age || '', positions: candidate.positions || [],
-                            education: candidate.education || '', work_experience: candidate.work_experience || '',
-                            languages: candidate.languages || '', seminars: candidate.seminars || '',
-                            notes: candidate.notes || '', evaluation_rating: candidate.evaluation_rating || '',
-                            offer_details: candidate.offer_details || '',
-                            interview_datetime: candidate.interview_datetime || null,
-                            interview_location: candidate.interview_location || '',
-                            candidate_confirmation_status: candidate.candidate_confirmation_status || null,
-                        });
-                        setError(null); // Καθαρισμός τυχόν σφαλμάτων
+                        initializeFormData(candidate);
+                        setError(null);
                     }} className="button-action button-cancel" disabled={isUpdating}>Cancel</button>
                  </>
              )}
@@ -340,7 +312,7 @@ function CandidateDetailPage() {
                       <p style={{fontWeight: 'bold', marginTop:'15px'}}>Interview Outcome:</p>
                       <button onClick={handleConfirmInterview} className="button-action button-confirm" disabled={isUpdating}>Confirm Happened (→ Evaluation)</button>
                       <button onClick={handleCancelOrRescheduleInterview} className="button-action button-cancel-schedule" disabled={isUpdating}>Cancel/Reschedule (→ Interested)</button>
-                      <button onClick={handleRejectInterview} className="button-action button-reject" disabled={isUpdating}>Reject Candidate</button>
+                      <button onClick={handleRejectFromInterview} className="button-action button-reject" disabled={isUpdating}>Reject Candidate</button>
                   </>
                )}
                 {candidate.current_status === 'Evaluation' && (
@@ -356,7 +328,35 @@ function CandidateDetailPage() {
                        <button onClick={handleOfferRejected} className="button-action button-reject" disabled={isUpdating}>Candidate Rejected Offer</button>
                   </>
                )}
-                {['Hired', 'Rejected', 'Declined'].includes(candidate.current_status) && (
+                {/* --- ΚΟΥΜΠΙ RE-EVALUATE --- */}
+                {candidate && candidate.current_status && ['Rejected', 'Declined'].includes(candidate.current_status) && (
+                  <>
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`Are you sure you want to move candidate ${candidate.full_name || candidate.candidate_id} back to "Needs Review"? This will clear interview and offer related data.`)) {
+                          handleUpdateStatus('NeedsReview', {
+                            interview_datetime: null,
+                            interview_location: null,
+                            candidate_confirmation_status: null,
+                            evaluation_rating: null,
+                            offer_details: null,
+                            offer_response_date: null
+                          });
+                        }
+                      }}
+                      className="button-action button-secondary"
+                      disabled={isUpdating}
+                      title="Move candidate back to Needs Review to re-evaluate"
+                      style={{marginTop: '15px'}}
+                    >
+                      Re-evaluate (Move to Needs Review)
+                    </button>
+                  </>
+                )}
+                {/* --- ΤΕΛΟΣ ΚΟΥΜΠΙΟΥ RE-EVALUATE --- */}
+
+                {/* Εμφάνιση μηνύματος μόνο αν είναι Hired ΚΑΙ δεν είναι Rejected/Declined */}
+                {candidate.current_status === 'Hired' && (
                   <p style={{ fontStyle: 'italic', color: 'var(--text-medium-gray)', marginTop: '15px' }}>No further actions available for this status.</p>
                 )}
           </div>

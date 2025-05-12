@@ -2,10 +2,9 @@
 import React, { useState } from 'react';
 import './HistoryLog.css'; // Import CSS
 
-// Accept buttonClassName prop
-function HistoryLog({ history, buttonClassName = 'button-cancel-schedule' }) { // Default to light blue
+function HistoryLog({ history, buttonClassName = 'button-cancel-schedule' }) {
     const [currentPage, setCurrentPage] = useState(1);
-    const itemsPerPage = 5;
+    const itemsPerPage = 5; // Μπορείς να το κάνεις prop αν θέλεις
 
     const historyArray = Array.isArray(history) ? history : [];
 
@@ -13,6 +12,7 @@ function HistoryLog({ history, buttonClassName = 'button-cancel-schedule' }) { /
         return <p className="no-history">No history recorded yet.</p>;
     }
 
+    // Sort history by timestamp descending (most recent first)
     const sortedHistory = [...historyArray].sort((a, b) => {
         const dateA = a?.timestamp ? new Date(a.timestamp) : new Date(0);
         const dateB = b?.timestamp ? new Date(b.timestamp) : new Date(0);
@@ -34,27 +34,51 @@ function HistoryLog({ history, buttonClassName = 'button-cancel-schedule' }) { /
 
     const formatDate = (isoString) => {
         if (!isoString) return 'N/A';
-        try { return new Date(isoString).toLocaleString(); } catch { return 'Invalid Date'; }
+        try {
+            return new Date(isoString).toLocaleString([], {
+                year: 'numeric', month: 'short', day: 'numeric',
+                hour: '2-digit', minute: '2-digit', hour12: false
+            });
+        } catch { return 'Invalid Date'; }
     };
 
-    // Function to get CSS class based on status text
     const getStatusClass = (status) => {
-        if (!status) return '';
-        // Normalize status text (lowercase, replace spaces) for class name
-        const normalizedStatus = status.toLowerCase().replace(/\s+/g, '-');
-        return `status-${normalizedStatus}`; // e.g., status-needs-review, status-offer-made
+        if (!status) return 'status-unknown';
+        return `status-${status.toLowerCase().replace(/\s+/g, '-')}`;
     };
 
     return (
         <div className="history-log">
             <ul className="history-list">
                 {currentItems.map((entry, index) => (
-                    <li key={`${entry?.timestamp || index}-${entry?.status || index}`} className="history-item">
-                        {/* Apply dynamic class based on status */}
-                        <span className={`history-status ${getStatusClass(entry?.status)}`}>
-                            {entry?.status || 'Unknown Action'}
-                        </span>
-                        <span className="history-timestamp">{formatDate(entry?.timestamp)}</span>
+                    <li key={`${entry?.timestamp || 'ts'}-${index}-${entry?.status || 'status'}`} className="history-item">
+                        <div className="history-item-main-info">
+                            <span className={`history-status-badge ${getStatusClass(entry?.status)}`}>
+                                {entry?.status || 'Unknown Action'}
+                            </span>
+                            <span className="history-details">
+                                {entry?.previous_status ? (
+                                    <>
+                                        Moved from <span className={`history-status-badge ${getStatusClass(entry.previous_status)}`}>{entry.previous_status}</span> to current.
+                                    </>
+                                ) : (
+                                    "Initial state or status set." /* Μήνυμα αν δεν υπάρχει previous_status */
+                                )}
+                                {/* --- ΑΦΑΙΡΕΣΗ USER ID ---
+                                {entry?.updated_by && (
+                                    <span className="history-user">
+                                        (by User ID: {entry.updated_by})
+                                    </span>
+                                )}
+                                --- ΤΕΛΟΣ ΑΦΑΙΡΕΣΗΣ --- */}
+                            </span>
+                            <span className="history-timestamp">{formatDate(entry?.timestamp)}</span>
+                        </div>
+                        {entry?.notes_at_this_stage && (
+                            <div className="history-item-notes">
+                                <pre>{entry.notes_at_this_stage}</pre>
+                            </div>
+                        )}
                     </li>
                 ))}
             </ul>

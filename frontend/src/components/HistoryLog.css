@@ -1,5 +1,5 @@
 /* frontend/src/components/HistoryLog.css */
-/* v2 - Status Background Colors */
+/* v3 - Added Notes Styling */
 
 .history-log {
   font-size: 0.9rem;
@@ -8,6 +8,8 @@
 .no-history {
     color: var(--text-light-gray);
     font-style: italic;
+    text-align: center; /* Center if no history */
+    padding: 15px 0;
 }
 
 .history-list {
@@ -17,54 +19,97 @@
 }
 
 .history-item {
-  padding: 8px 5px;
+  padding: 10px 5px; /* Increased padding slightly */
   border-bottom: 1px solid var(--border-color);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
+  /* Removed flex from here, will handle layout internally */
 }
 
 .history-item:last-child {
   border-bottom: none;
 }
 
-.history-status {
-  font-weight: 600;
-  color: var(--text-black); /* Black text for all status badges */
-  padding: 4px 8px;        /* Adjusted padding */
-  border-radius: 4px;
-  font-size: 0.8rem;
-  white-space: nowrap;
-  margin-right: 10px;
-  /* Default background (can be transparent or light gray) */
-  background-color: #e9ecef;
+.history-item-main-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap; /* Allow wrapping for smaller screens */
+  gap: 10px; /* Gap between elements in this row */
 }
 
-/* --- Status Specific Background Colors --- */
-.history-status.status-needsreview { background-color: var(--status-needsreview-bg); }
-.history-status.status-accepted { background-color: var(--status-accepted-bg); }
-.history-status.status-interested { background-color: var(--status-interested-bg); }
-.history-status.status-interview { background-color: var(--status-interview-bg); }
-.history-status.status-evaluation { background-color: var(--status-evaluation-bg); }
-.history-status.status-offermade, .history-status.status-offer-made { background-color: var(--status-offermade-bg); } /* Handle space */
-.history-status.status-hired { background-color: var(--status-hired-bg); color: var(--text-dark-gray); } /* Darker text for darker green */
-.history-status.status-rejected { background-color: var(--status-rejected-bg); }
-.history-status.status-declined { background-color: var(--status-declined-bg); }
-.history-status.status-processing { background-color: var(--status-needsreview-bg); } /* Use same as needs review */
-.history-status.status-parsingfailed { background-color: var(--status-rejected-bg); } /* Use same as rejected */
-/* Add more status mappings if needed */
+.history-status-badge { /* Renamed from history-status for clarity */
+  font-weight: 600;
+  color: var(--text-black);
+  padding: 4px 8px;
+  border-radius: 12px; /* More pill-like */
+  font-size: 0.8rem;
+  white-space: nowrap;
+  /* Default background, will be overridden by specific status classes */
+  background-color: #e9ecef;
+  line-height: 1.3;
+}
+
+/* --- Status Specific Background Colors (from your existing CSS) --- */
+.history-status-badge.status-needsreview,
+.history-status-badge.status-needs-review { background-color: var(--status-needsreview-bg); }
+.history-status-badge.status-accepted { background-color: var(--status-accepted-bg); }
+.history-status-badge.status-interested { background-color: var(--status-interested-bg); }
+.history-status-badge.status-interview { background-color: var(--status-interview-bg); }
+.history-status-badge.status-evaluation { background-color: var(--status-evaluation-bg); }
+.history-status-badge.status-offermade,
+.history-status-badge.status-offer-made { background-color: var(--status-offermade-bg); }
+.history-status-badge.status-hired { background-color: var(--status-hired-bg); color: var(--text-dark-gray); }
+.history-status-badge.status-rejected { background-color: var(--status-rejected-bg); }
+.history-status-badge.status-declined { background-color: var(--status-declined-bg); }
+.history-status-badge.status-processing { background-color: var(--status-needsreview-bg); }
+.history-status-badge.status-parsingfailed,
+.history-status-badge.status-parsing-failed { background-color: var(--status-rejected-bg); }
+.history-status-badge.status-unknown { background-color: #f8f9fa; color: var(--text-light-gray); }
 /* --- End Status Specific Background Colors --- */
 
+.history-details {
+    font-size: 0.85rem;
+    color: var(--text-medium-gray);
+    flex-grow: 1; /* Allow details to take available space */
+    margin: 0 10px; /* Add some margin */
+}
+.history-details .history-status-badge { /* Badges within details text */
+    font-size: 0.75rem; /* Slightly smaller */
+    padding: 2px 6px;
+}
+
+
+.history-user {
+    font-style: italic;
+    margin-left: 5px;
+}
 
 .history-timestamp {
   color: var(--text-light-gray);
-  font-size: 0.85rem;
+  font-size: 0.8rem; /* Slightly smaller timestamp */
   white-space: nowrap;
   text-align: right;
-  flex-grow: 1;
+  /* flex-grow: 1; Removed, main-info handles flex */
 }
+
+/* --- ΝΕΟ STYLING ΓΙΑ ΤΙΣ ΣΗΜΕΙΩΣΕΙΣ --- */
+.history-item-notes {
+  margin-top: 8px;
+  padding: 10px;
+  background-color: #f0f0f0; /* Ελαφρώς διαφορετικό γκρι από τα άλλα backgrounds */
+  border-left: 3px solid var(--primary-color); /* Έμφαση στα αριστερά */
+  border-radius: 0 4px 4px 0;
+  font-size: 0.85em;
+  color: var(--text-dark-gray);
+}
+
+.history-item-notes pre {
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  margin: 0;
+  font-family: inherit;
+  line-height: 1.4;
+}
+/* --- ΤΕΛΟΣ ΝΕΟΥ STYLING --- */
 
 .pagination-controls {
   display: flex;
@@ -78,7 +123,6 @@
 .pagination-controls button.button-action {
    padding: 4px 10px;
    font-size: 0.85rem;
-   /* Inherits .button-cancel-schedule style via prop */
 }
 
 .page-info {
