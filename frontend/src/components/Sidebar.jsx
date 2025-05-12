@@ -1,12 +1,11 @@
 // frontend/src/components/Sidebar.jsx
 import React from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
-import { useAuth } from '../App'; // Import useAuth
+import { NavLink } from 'react-router-dom';
+import { useAuth } from '../App';
 import './Sidebar.css';
 
-// Define statuses for sidebar links
 const candidateStatuses = [
-  { name: 'Needs Review', path: '/dashboard', statusParam: 'NeedsReview', exact: true }, // Dashboard shows NeedsReview
+  { name: 'Needs Review', path: '/dashboard', statusParam: 'NeedsReview', exact: true },
   { name: 'Accepted', path: '/accepted', statusParam: 'Accepted' },
   { name: 'Interested', path: '/interested', statusParam: 'Interested' },
   { name: 'Interview', path: '/interview', statusParam: 'Interview' },
@@ -17,38 +16,38 @@ const candidateStatuses = [
   { name: 'Declined', path: '/declined', statusParam: 'Declined' },
 ];
 
-
 function Sidebar() {
-  const { logout } = useAuth(); // Get the logout function from context
-  const navigate = useNavigate();
+  const { logout } = useAuth();
 
-  // --- Restore Logout Handler ---
   const handleLogout = async () => {
     console.log("Logout button clicked");
-    // Call the logout function provided by AuthContext in App.jsx
     await logout();
-    // No need to navigate here, App.jsx routing handles redirect when currentUser becomes null
-    // navigate('/login'); // This navigation is now handled by App.jsx's router
   };
-  // --- End Restore Logout Handler ---
 
   return (
     <div className="sidebar">
+      {/* --- LOGO ADDED HERE --- */}
+      <div className="sidebar-logo-container">
+        <img src="/nexona_logo.png" alt="NEXONA Logo" className="sidebar-logo" />
+        {/* Or use /logo.png if you named it that */}
+      </div>
+      {/* --- END LOGO --- */}
+
       <nav>
         <ul>
-          {/* Dashboard Link */}
+          {/* Dashboard Link (Needs Review) */}
           <li>
             <NavLink
-              to="/dashboard" // Main link for Needs Review
+              to="/dashboard"
               className={({ isActive }) => isActive ? 'active-link' : ''}
-              end // Use 'end' prop for exact matching of index/dashboard route
+              end
             >
               Needs Review
             </NavLink>
           </li>
 
-          {/* Candidate Status Links */}
-          {candidateStatuses.filter(s => s.name !== 'Needs Review').map((status) => ( // Filter out Needs Review as it's covered by Dashboard
+          {/* Other Candidate Status Links */}
+          {candidateStatuses.filter(s => s.name !== 'Needs Review').map((status) => (
             <li key={status.statusParam}>
               <NavLink
                 to={status.path}
@@ -75,7 +74,6 @@ function Sidebar() {
 
           {/* Logout Button */}
           <li>
-            {/* Changed from NavLink to button for semantic correctness */}
             <button onClick={handleLogout} className="logout-button">
               Logout
             </button>

@@ -7,6 +7,20 @@ import HistoryLog from '../components/HistoryLog';
 import InterviewScheduler from '../components/InterviewScheduler';
 import './CandidateDetailPage.css'; // Import the CSS file
 
+// Helper function για να δίνει κείμενο, χρώμα & κλάση CSS στο confirmation status
+const getConfirmationStatusInfo = (confirmationStatus) => {
+    switch (confirmationStatus) {
+        case 'Confirmed':
+            return { text: 'Επιβεβαιώθηκε από Υποψήφιο', color: 'green', className: 'status-confirmed' };
+        case 'Declined':
+             return { text: 'Απορρίφθηκε / Αίτημα Αλλαγής από Υποψήφιο', color: 'red', className: 'status-declined' };
+        case 'Pending':
+             return { text: 'Αναμονή Απάντησης από Υποψήφιο', color: 'orange', className: 'status-pending' };
+        default:
+             return { text: '', color: 'grey', className: 'status-unknown' }; // Επιστρέφει κενό κείμενο για null/undefined
+    }
+};
+
 function CandidateDetailPage() {
   const { candidateId } = useParams();
   const navigate = useNavigate();
@@ -16,22 +30,18 @@ function CandidateDetailPage() {
   const [error, setError] = useState(null);
   const [isUpdating, setIsUpdating] = useState(false);
   const [editMode, setEditMode] = useState(false);
-  const [formData, setFormData] = useState({}); // Use for edits
+  const [formData, setFormData] = useState({});
 
-  // Fetch candidate details and CV URL
   const fetchCandidateData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
-    console.log(`Fetching data for candidate: ${candidateId}`);
     try {
       const [detailsRes, urlRes] = await Promise.all([
         apiClient.get(`/candidate/${candidateId}`),
         apiClient.get(`/candidate/${candidateId}/cv_url`)
       ]);
-      console.log("Candidate details fetched:", detailsRes.data);
-      console.log("CV URL fetched:", urlRes.data);
       setCandidate(detailsRes.data);
-      // Initialize formData with potentially null values handled gracefully
+      // Αρχικοποίηση του formData με τα δεδομένα του υποψηφίου
       setFormData({
           first_name: detailsRes.data.first_name || '',
           last_name: detailsRes.data.last_name || '',
@@ -46,15 +56,12 @@ function CandidateDetailPage() {
           notes: detailsRes.data.notes || '',
           evaluation_rating: detailsRes.data.evaluation_rating || '',
           offer_details: detailsRes.data.offer_details || '',
-          // Read-only fields below, no need to put in formData for edit usually
-          // current_status: detailsRes.data.current_status
-          // submission_date: detailsRes.data.submission_date
-          // interview_datetime: detailsRes.data.interview_datetime
-          // interview_location: detailsRes.data.interview_location
+          interview_datetime: detailsRes.data.interview_datetime || null,
+          interview_location: detailsRes.data.interview_location || '',
+          candidate_confirmation_status: detailsRes.data.candidate_confirmation_status || null,
       });
       setCvUrl(urlRes.data.cv_url);
     } catch (err) {
-      console.error("Error fetching candidate data:", err);
       setError(err.response?.data?.error || 'Failed to load candidate details.');
       setCandidate(null);
       setCvUrl(null);
@@ -65,12 +72,10 @@ function CandidateDetailPage() {
 
   useEffect(() => {
     fetchCandidateData();
-  }, [fetchCandidateData]); // Fetch data when component mounts or candidateId changes
+  }, [fetchCandidateData]);
 
-  // Handle input changes in edit mode
   const handleInputChange = (event) => {
         const { name, value, type } = event.target;
-        // Handle potential number conversion for age
         const processedValue = type === 'number' ? (value === '' ? '' : Number(value)) : value;
         setFormData(prevData => ({
             ...prevData,
@@ -78,70 +83,69 @@ function CandidateDetailPage() {
         }));
     };
 
-  // Handle position changes (comma-separated)
   const handlePositionChange = (event) => {
-        const positions = event.target.value.split(',').map(p => p.trim()).filter(p => p); // Create array, remove empty
+        const positions = event.target.value.split(',').map(p => p.trim()).filter(p => p);
          setFormData(prevData => ({
              ...prevData,
              positions: positions
          }));
      };
 
-  // Handle Status Update / Actions
   const handleUpdateStatus = async (newStatus, extraData = {}) => {
     if (!candidate) return;
     setIsUpdating(true);
     setError(null);
-    // Include notes from formData if in edit mode, otherwise from candidate state
-    const currentNotes = editMode ? formData.notes : candidate.notes;
+    const currentNotes = editMode ? formData.notes : (candidate?.notes || '');
     const payload = {
         current_status: newStatus,
-        notes: currentNotes, // Always send current notes with status change
+        notes: currentNotes,
         ...extraData
     };
+    if (payload.interview_datetime === '') payload.interview_datetime = null;
+    if (payload.offer_response_date === '') payload.offer_response_date = null;
 
-    // Clean payload: remove null values unless specifically allowed by backend
-    // Or let backend handle nulls appropriately
-    Object.keys(payload).forEach(key => payload[key] == null && delete payload[key]);
-
-
-    console.log("Updating status with payload:", payload);
     try {
       const response = await apiClient.put(`/candidate/${candidate.candidate_id}`, payload);
-      // Update both main state and form state
       setCandidate(response.data);
-      setFormData({ // Re-initialize form data after update
-        ...formData, // Keep potentially unsaved edits in other fields ? Or reset fully? Resetting fully is safer.
-        ...(response.data), // Update with response, ensuring fields match formData structure
-         notes: response.data.notes || '', // Ensure notes field is updated
-         positions: response.data.positions || [], // Ensure positions are updated
-         // Ensure other relevant fields are reset/updated
+      // Επαναφορά του formData με τα νέα δεδομένα από το response
+      setFormData({
+        first_name: response.data.first_name || '',
+        last_name: response.data.last_name || '',
+        email: response.data.email || '',
+        phone_number: response.data.phone_number || '',
+        age: response.data.age || '',
+        positions: response.data.positions || [],
+        education: response.data.education || '',
+        work_experience: response.data.work_experience || '',
+        languages: response.data.languages || '',
+        seminars: response.data.seminars || '',
+        notes: response.data.notes || '',
+        evaluation_rating: response.data.evaluation_rating || '',
+        offer_details: response.data.offer_details || '',
+        interview_datetime: response.data.interview_datetime || null,
+        interview_location: response.data.interview_location || '',
+        candidate_confirmation_status: response.data.candidate_confirmation_status || null,
       });
-      console.log(`Candidate status updated to ${newStatus}`);
-      // Navigate after specific status changes if desired
       if (newStatus === 'Rejected') navigate('/rejected');
       if (newStatus === 'Declined') navigate('/declined');
     } catch (err) {
-      console.error(`Error updating status to ${newStatus}:`, err);
       setError(err.response?.data?.error || `Failed to update status.`);
     } finally {
       setIsUpdating(false);
     }
   };
 
-  // Handle saving general edits
   const handleSaveChanges = async () => {
       if (!candidate) return;
       setIsUpdating(true);
       setError(null);
       try {
-          // Construct payload ONLY from editable fields in formData
           const updatePayload = {
              first_name: formData.first_name,
              last_name: formData.last_name,
              email: formData.email,
              phone_number: formData.phone_number,
-             age: formData.age === '' ? null : formData.age, // Send null if age is empty
+             age: formData.age === '' ? null : formData.age,
              positions: formData.positions,
              education: formData.education,
              work_experience: formData.work_experience,
@@ -150,110 +154,149 @@ function CandidateDetailPage() {
              notes: formData.notes,
              evaluation_rating: formData.evaluation_rating,
              offer_details: formData.offer_details,
-             // Do NOT send status or other non-editable fields here
-             // Status is changed via handleUpdateStatus
           };
-
-          console.log("Saving changes with payload:", updatePayload);
           const response = await apiClient.put(`/candidate/${candidate.candidate_id}`, updatePayload);
-          // Update both states
           setCandidate(response.data);
-          setFormData({ ...(response.data) }); // Reset form data fully from response
-          setEditMode(false); // Exit edit mode on success
-          console.log("Candidate details updated successfully.");
+          // Επαναφορά του formData με τα νέα δεδομένα από το response
+           setFormData({
+                first_name: response.data.first_name || '',
+                last_name: response.data.last_name || '',
+                email: response.data.email || '',
+                phone_number: response.data.phone_number || '',
+                age: response.data.age || '',
+                positions: response.data.positions || [],
+                education: response.data.education || '',
+                work_experience: response.data.work_experience || '',
+                languages: response.data.languages || '',
+                seminars: response.data.seminars || '',
+                notes: response.data.notes || '',
+                evaluation_rating: response.data.evaluation_rating || '',
+                offer_details: response.data.offer_details || '',
+                interview_datetime: response.data.interview_datetime || null,
+                interview_location: response.data.interview_location || '',
+                candidate_confirmation_status: response.data.candidate_confirmation_status || null,
+            });
+          setEditMode(false);
       } catch (err) {
-          console.error("Error saving candidate details:", err);
           setError(err.response?.data?.error || `Failed to save changes.`);
       } finally {
           setIsUpdating(false);
       }
   };
 
-  // Handle interview scheduling
   const handleScheduleInterview = async ({ date, time, location }) => {
        if (!candidate || !date || !time) {
            setError("Please select both date and time for the interview.");
            return;
        }
        try {
-           // Combine date and time inputs into a local date object
            const localDateTime = new Date(`${date}T${time}:00`);
-           if (isNaN(localDateTime.getTime())) { // Check if date is valid
+           if (isNaN(localDateTime.getTime())) {
                 throw new Error("Invalid date/time combination.");
            }
-           // Convert to ISO string in UTC
            const utcDateTimeISO = localDateTime.toISOString();
-
-           console.log("Scheduling Interview - Local:", localDateTime, "UTC ISO:", utcDateTimeISO, "Location:", location);
-
            await handleUpdateStatus('Interview', {
                interview_datetime: utcDateTimeISO,
-               interview_location: location || '' // Send empty string if no location
+               interview_location: location || ''
            });
        } catch (e) {
-           console.error("Error creating datetime string or scheduling:", e);
            setError(`Failed to schedule: ${e.message}`);
        }
   };
 
-  // Define action handlers clearly
   const handleConfirmInterview = () => handleUpdateStatus('Evaluation');
-  const handleCancelOrRescheduleInterview = () => handleUpdateStatus('Interested', { interview_datetime: null, interview_location: null }); // Reverts to Interested
-  const handleRejectInterview = () => handleUpdateStatus('Rejected'); // Reject directly from Interview stage
-  const handleMakeOffer = () => handleUpdateStatus('OfferMade'); // Add offer details via edit mode if needed
+  const handleCancelOrRescheduleInterview = () => handleUpdateStatus('Interested', { interview_datetime: null, interview_location: null, candidate_confirmation_status: null });
+  const handleRejectInterview = () => handleUpdateStatus('Rejected');
+  const handleMakeOffer = () => handleUpdateStatus('OfferMade');
   const handleOfferAccepted = () => handleUpdateStatus('Hired');
   const handleOfferRejected = () => handleUpdateStatus('Declined', { offer_response_date: new Date().toISOString() });
 
-
-  // --- Render Logic ---
-  if (isLoading) return <div>Loading candidate details...</div>;
-  // Show error prominently if loading failed
-  if (error && !candidate) return <div className="error-message">Error: {error} <button onClick={fetchCandidateData}>Retry</button></div>;
-  // Handle case where candidate might become null after an action? Unlikely but safe.
-  if (!candidate) return <div>Candidate not found or data unavailable.</div>;
-
-  // Formatting function
   const formatDate = (isoString) => {
     if (!isoString) return 'N/A';
-    try { return new Date(isoString).toLocaleString(); } catch { return 'Invalid Date'; }
+    try { return new Date(isoString).toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }); } catch { return 'Invalid Date'; }
   };
+
+  if (isLoading) return <div className="loading-placeholder card-style">Loading candidate details...</div>;
+  if (error && !candidate) return <div className="error-message card-style">Error: {error} <button onClick={fetchCandidateData} className="button-action button-secondary">Retry</button></div>;
+  if (!candidate) return <div className="card-style">Candidate not found or data unavailable.</div>;
+
+  const confirmationDisplayInfo = getConfirmationStatusInfo(candidate.candidate_confirmation_status);
 
   return (
     <div className="candidate-detail-page">
       <Link to="/dashboard" className="back-link">← Back to Dashboard</Link>
-
-      {/* Show general errors */}
-      {error && <div className="error-message">Error: {error}</div>}
-
+      {error && <div className="error-message">{error}</div>}
       <div className="detail-header">
-         <h2>{editMode ? `${formData.first_name || ''} ${formData.last_name || ''}` : `${candidate.first_name || ''} ${candidate.last_name || 'Candidate Details'}`}</h2>
+         <h2>{editMode ? `${formData.first_name || ''} ${formData.last_name || ''}`.trim() || 'Edit Candidate' : `${candidate.first_name || ''} ${candidate.last_name || 'Candidate Details'}`.trim()}</h2>
          <div className="header-actions">
              {!editMode ? (
                  <button onClick={() => setEditMode(true)} className="button-action button-edit">Edit</button>
              ) : (
                  <>
                     <button onClick={handleSaveChanges} className="button-action button-save" disabled={isUpdating}>{isUpdating ? 'Saving...' : 'Save Changes'}</button>
-                    {/* Reset form data to original candidate data on cancel */}
-                    <button onClick={() => { setEditMode(false); setFormData({ ...candidate }); }} className="button-action button-cancel" disabled={isUpdating}>Cancel</button>
+                    <button onClick={() => {
+                        setEditMode(false);
+                        // Επαναφορά του formData από το τρέχον candidate state
+                        setFormData({
+                            first_name: candidate.first_name || '', last_name: candidate.last_name || '',
+                            email: candidate.email || '', phone_number: candidate.phone_number || '',
+                            age: candidate.age || '', positions: candidate.positions || [],
+                            education: candidate.education || '', work_experience: candidate.work_experience || '',
+                            languages: candidate.languages || '', seminars: candidate.seminars || '',
+                            notes: candidate.notes || '', evaluation_rating: candidate.evaluation_rating || '',
+                            offer_details: candidate.offer_details || '',
+                            interview_datetime: candidate.interview_datetime || null,
+                            interview_location: candidate.interview_location || '',
+                            candidate_confirmation_status: candidate.candidate_confirmation_status || null,
+                        });
+                        setError(null); // Καθαρισμός τυχόν σφαλμάτων
+                    }} className="button-action button-cancel" disabled={isUpdating}>Cancel</button>
                  </>
              )}
          </div>
       </div>
-
       <div className="detail-content">
-        {/* --- Left Column: Details & Actions --- */}
         <div className="detail-column detail-column-left">
           <h3>Candidate Information</h3>
           <div className="info-grid">
+              {/* Fields for display/edit */}
               <div className="info-item"><label>First Name:</label>{editMode ? <input type="text" name="first_name" value={formData.first_name} onChange={handleInputChange} className="input-light-gray"/> : <span>{candidate.first_name || 'N/A'}</span>}</div>
               <div className="info-item"><label>Last Name:</label>{editMode ? <input type="text" name="last_name" value={formData.last_name} onChange={handleInputChange} className="input-light-gray"/> : <span>{candidate.last_name || 'N/A'}</span>}</div>
               <div className="info-item"><label>Email:</label>{editMode ? <input type="email" name="email" value={formData.email} onChange={handleInputChange} className="input-light-gray"/> : <span>{candidate.email || 'N/A'}</span>}</div>
               <div className="info-item"><label>Phone:</label>{editMode ? <input type="tel" name="phone_number" value={formData.phone_number} onChange={handleInputChange} className="input-light-gray"/> : <span>{candidate.phone_number || 'N/A'}</span>}</div>
               <div className="info-item"><label>Age:</label>{editMode ? <input type="number" name="age" value={formData.age} onChange={handleInputChange} className="input-light-gray"/> : <span>{candidate.age || 'N/A'}</span>}</div>
-              <div className="info-item"><label>Position(s):</label>{editMode ? <input type="text" name="positions" value={formData.positions.join(', ')} onChange={handlePositionChange} className="input-light-gray" placeholder="Comma-separated"/> : <span>{candidate.positions.join(', ') || 'N/A'}</span>}</div>
-              <div className="info-item"><label>Status:</label><span>{candidate.current_status || 'N/A'}</span></div>
+              <div className="info-item"><label>Position(s):</label>{editMode ? <input type="text" name="positions" value={formData.positions.join(', ')} onChange={handlePositionChange} className="input-light-gray" placeholder="Comma-separated"/> : <span>{candidate.positions?.join(', ') || 'N/A'}</span>}</div>
+              <div className="info-item"><label>Status:</label><span className={`status-badge status-${candidate.current_status?.toLowerCase().replace(/\s+/g, '-')}`}>{candidate.current_status || 'N/A'}</span></div>
               <div className="info-item"><label>Submission Date:</label><span>{formatDate(candidate.submission_date)}</span></div>
-              {candidate.interview_datetime && (<div className="info-item info-item-full"><label>Interview:</label><span>{formatDate(candidate.interview_datetime)} {candidate.interview_location ? ` at ${candidate.interview_location}` : ''}</span></div>)}
+
+              {/* Interview Details & Confirmation Status */}
+              {candidate.interview_datetime && (
+                <>
+                  <div className="info-item info-item-full">
+                    <label>Interview:</label>
+                    <span>{formatDate(candidate.interview_datetime)} {candidate.interview_location ? ` at ${candidate.interview_location}` : ''}</span>
+                  </div>
+                  {confirmationDisplayInfo && confirmationDisplayInfo.text && (
+                    <div className="info-item info-item-full">
+                        <label>Κατάσταση Επιβεβαίωσης Ραντεβού:</label>
+                        <span
+                            style={{
+                                color: confirmationDisplayInfo.color,
+                                fontWeight: 'bold',
+                                padding: '3px 8px',
+                                borderRadius: '12px',
+                                backgroundColor: `${confirmationDisplayInfo.color}20`, // Light tint
+                                fontSize: '0.85rem'
+                            }}
+                            className={`status-badge ${confirmationDisplayInfo.className}`}
+                        >
+                            {confirmationDisplayInfo.text}
+                        </span>
+                    </div>
+                  )}
+                </>
+              )}
+
               <div className="info-item info-item-full"><label>Education:</label>{editMode ? <textarea name="education" value={formData.education} onChange={handleInputChange} className="input-light-gray"/> : <p>{candidate.education || 'N/A'}</p>}</div>
               <div className="info-item info-item-full"><label>Work Experience:</label>{editMode ? <textarea name="work_experience" value={formData.work_experience} onChange={handleInputChange} className="input-light-gray"/> : <p>{candidate.work_experience || 'N/A'}</p>}</div>
               <div className="info-item"><label>Languages:</label>{editMode ? <input type="text" name="languages" value={formData.languages} onChange={handleInputChange} className="input-light-gray"/> : <span>{candidate.languages || 'N/A'}</span>}</div>
@@ -264,7 +307,7 @@ function CandidateDetailPage() {
               {candidate.offer_response_date && (<div className="info-item"><label>Offer Response Date:</label><span>{formatDate(candidate.offer_response_date)}</span></div>)}
           </div>
 
-          {/* --- Action Buttons --- */}
+          {/* Action Buttons based on candidate.current_status */}
           <div className="action-buttons">
               <h4>Actions</h4>
               {candidate.current_status === 'NeedsReview' && (
@@ -281,15 +324,22 @@ function CandidateDetailPage() {
               )}
                {candidate.current_status === 'Interested' && (
                   <>
-                      <InterviewScheduler onSchedule={handleScheduleInterview} disabled={isUpdating} inputClassName="input-light-gray"/>
-                      <button onClick={() => handleUpdateStatus('Rejected')} className="button-action button-reject" disabled={isUpdating}>Reject</button>
+                      <InterviewScheduler
+                        onSchedule={handleScheduleInterview}
+                        disabled={isUpdating}
+                        inputClassName="input-light-gray"
+                        initialDate={candidate.interview_datetime ? new Date(candidate.interview_datetime).toISOString().split('T')[0] : ''}
+                        initialTime={candidate.interview_datetime ? new Date(candidate.interview_datetime).toTimeString().substring(0,5) : ''}
+                        initialLocation={candidate.interview_location || ''}
+                      />
+                      <button onClick={() => handleUpdateStatus('Rejected')} className="button-action button-reject" disabled={isUpdating} style={{marginTop: '10px'}}>Reject Candidate</button>
                   </>
                )}
                {candidate.current_status === 'Interview' && (
                    <>
                       <p style={{fontWeight: 'bold', marginTop:'15px'}}>Interview Outcome:</p>
-                      <button onClick={handleConfirmInterview} className="button-action button-confirm" disabled={isUpdating}>Confirm Happened</button>
-                      <button onClick={handleCancelOrRescheduleInterview} className="button-action button-cancel-schedule" disabled={isUpdating}>Cancel/Reschedule</button>
+                      <button onClick={handleConfirmInterview} className="button-action button-confirm" disabled={isUpdating}>Confirm Happened (→ Evaluation)</button>
+                      <button onClick={handleCancelOrRescheduleInterview} className="button-action button-cancel-schedule" disabled={isUpdating}>Cancel/Reschedule (→ Interested)</button>
                       <button onClick={handleRejectInterview} className="button-action button-reject" disabled={isUpdating}>Reject Candidate</button>
                   </>
                )}
@@ -312,7 +362,7 @@ function CandidateDetailPage() {
           </div>
         </div> {/* End Left Column */}
 
-        {/* --- Right Column: CV & History --- */}
+        {/* Right Column: CV & History */}
         <div className="detail-column detail-column-right">
            <div className="cv-viewer-section card-style">
              <h3>CV Document</h3>
@@ -320,7 +370,7 @@ function CandidateDetailPage() {
            </div>
            <div className="history-log-section card-style">
              <h3>Candidate History</h3>
-             <HistoryLog history={candidate.history} buttonClassName="button-cancel-schedule" />
+             <HistoryLog history={candidate.history || []} buttonClassName="button-cancel-schedule" />
            </div>
         </div> {/* End Right Column */}
       </div> {/* End Detail Content */}

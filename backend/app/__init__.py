@@ -5,127 +5,114 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
 from flask_mail import Mail
-from flask_login import LoginManager # Keep import even if auth disabled now
+from flask_login import LoginManager
 from celery import Celery, Task
-# Assuming config.py is one level up from 'app' directory
-from config import Config # Corrected import assuming standard structure
 import logging
 import os
-import json
+
+# --- ΣΩΣΤΗ ΕΙΣΑΓΩΓΗ: Το config.py είναι ένα επίπεδο πάνω ---
+# Χρησιμοποιούμε sys.path modification ή PYTHONPATH για να το βρει το Python.
+# Εναλλακτικά, αν το backend/ είναι στο PYTHONPATH, τότε το 'from config import ...' δουλεύει.
+# Για απλότητα, αν το config.py είναι ΠΑΝΤΑ ένα επίπεδο πάνω, μπορούμε να το κάνουμε έτσι:
+import sys
+# Προσθέτουμε τον γονικό φάκελο (backend/) στο sys.path
+# ώστε να μπορούμε να κάνουμε import το 'config' module
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from config import Config as DefaultConfigClass # Εισάγουμε την κλάση Config από το backend/config.py
+# Αφαιρούμε την προσθήκη από το path μετά την εισαγωγή για να μην επηρεάζει άλλα imports
+sys.path.pop(0)
+# --- ΤΕΛΟΣ ΣΩΣΤΗΣ ΕΙΣΑΓΩΓΗΣ ---
+
 
 db = SQLAlchemy()
 migrate = Migrate()
 cors = CORS()
 mail = Mail()
-login_manager = LoginManager() # Keep init
-login_manager.login_view = 'api.login' # Keep config, points to blueprint route
+login_manager = LoginManager()
+login_manager.login_view = 'api.login' # 'api' είναι το όνομα του Blueprint
 
-# Initialize Celery - Use new config keys directly where possible
-# The include list tells Celery where to find tasks
+# Initialize Celery - Broker/Backend URLs are now set directly from app.config
 celery = Celery(__name__,
-                broker=Config.CELERY_BROKER_URL,
-                backend=Config.CELERY_RESULT_BACKEND,
                 include=['tasks.parsing', 'tasks.communication', 'tasks.reminders'])
 
-# Keep user_loader for when Flask-Login is re-enabled
 @login_manager.user_loader
 def load_user(user_id):
-    # Import inside function to avoid circular dependency
-    from app.models import User # Corrected import assuming models.py is in 'app'
+    from app.models import User # Import here to avoid circularity
     try:
         return User.query.get(int(user_id))
     except:
         return None
 
-def create_app(config_class=Config):
+def create_app(config_class_override=None): # Η παράμετρος είναι η κλάση config
     app = Flask(__name__)
-    app.config.from_object(config_class)
 
-    # Optional: Log Mail Debug status on startup for confirmation
+    # --- ΦΟΡΤΩΣΗ CONFIG ---
+    # Χρησιμοποιούμε την override αν δόθηκε, αλλιώς την DefaultConfigClass
+    config_to_load = config_class_override if config_class_override else DefaultConfigClass
+    app.config.from_object(config_to_load)
+    # --- ΤΕΛΟΣ ΦΟΡΤΩΣΗΣ CONFIG ---
+
+    # Startup Logging
     try:
         startup_logger = logging.getLogger(f"{__name__}.startup_config_check")
-        startup_logger.setLevel(logging.INFO)
         if not startup_logger.hasHandlers():
+            startup_logger.setLevel(logging.INFO)
             startup_handler = logging.StreamHandler()
-            # Optional: Add formatting to handler if desired
-            # formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-            # startup_handler.setFormatter(formatter)
             startup_logger.addHandler(startup_handler)
+            startup_logger.propagate = False
 
         mail_debug_val = app.config.get('MAIL_DEBUG')
         mail_suppress_val = app.config.get('MAIL_SUPPRESS_SEND')
-        startup_logger.info(f"WEB APP STARTUP: MAIL_DEBUG={mail_debug_val}, MAIL_SUPPRESS_SEND={mail_suppress_val}")
+        startup_logger.info(f"WEB APP STARTUP (app/__init__): MAIL_DEBUG={mail_debug_val}, MAIL_SUPPRESS_SEND={mail_suppress_val}")
     except Exception as log_err:
-        # Prevent logging setup failure from crashing app start
-        print(f"Warning: Error setting up startup config logger: {log_err}")
+        print(f"Warning: Error setting up startup config logger in app/__init__.py: {log_err}")
 
-
-    # Standard Logging Setup
+    # Standard Logging Setup for Flask app logger
     if not app.debug and not app.testing:
-        # Avoid adding duplicate handlers if called multiple times
         if not app.logger.hasHandlers():
             stream_handler = logging.StreamHandler()
             stream_handler.setLevel(logging.INFO)
             app.logger.addHandler(stream_handler)
     app.logger.setLevel(logging.INFO)
-    app.logger.info('CV Manager App Starting Up...')
+    app.logger.info('CV Manager App Starting Up (from app/__init__.py)...')
 
     # Initialize extensions
     db.init_app(app)
     migrate.init_app(app, db)
-    # Configure CORS properly - Allow credentials and specify origin(s)
-    # Use '*' only for development, replace with actual frontend URL in production
     cors.init_app(app, supports_credentials=True, origins=app.config.get('CORS_ORIGINS', '*'))
     mail.init_app(app)
-    login_manager.init_app(app) # Keep LoginManager init for future use
+    login_manager.init_app(app)
 
-    # --- Update Celery configuration from Flask app config using NEW keys ---
-    # Celery 5+ uses lowercase keys without the CELERY_ prefix
+    # Update Celery configuration from Flask app config
     celery_config_updates = {
-        'broker_url': app.config['CELERY_BROKER_URL'],
-        'result_backend': app.config['CELERY_RESULT_BACKEND'],
-        # Pass Mail settings needed by tasks (these are custom, not core Celery keys)
-        'MAIL_SERVER': app.config.get('MAIL_SERVER'),
-        'MAIL_PORT': app.config.get('MAIL_PORT'),
-        'MAIL_USE_TLS': app.config.get('MAIL_USE_TLS'),
-        'MAIL_USE_SSL': app.config.get('MAIL_USE_SSL'),
-        'MAIL_USERNAME': app.config.get('MAIL_USERNAME'),
-        'MAIL_PASSWORD': app.config.get('MAIL_PASSWORD'), # Ensure tasks handle sensitive data carefully
-        'MAIL_SENDER': app.config.get('MAIL_SENDER'),
-        'MAIL_DEBUG': app.config.get('MAIL_DEBUG'), # Pass debug flag to tasks
-        'MAIL_SUPPRESS_SEND': app.config.get('MAIL_SUPPRESS_SEND'), # Pass suppress flag
-        # Beat schedule using new key format
+        'broker_url': app.config.get('CELERY_BROKER_URL'),
+        'result_backend': app.config.get('CELERY_RESULT_BACKEND'),
+        'task_always_eager': app.config.get('CELERY_TASK_ALWAYS_EAGER', False),
+        'task_eager_propagates': app.config.get('CELERY_TASK_EAGER_PROPAGATES', False),
         'beat_schedule': {
             'check-interview-reminders-every-minute': {
                 'task': 'tasks.reminders.check_upcoming_interviews',
-                'schedule': 60.0, # Run every 60 seconds
+                'schedule': 60.0,
             },
         },
-        # --- Timezone setting using NEW key format ---
-        'timezone': 'UTC'
-        # --------------------------------------------
+        'timezone': app.config.get('CELERY_TIMEZONE', 'UTC')
     }
     celery.conf.update(**celery_config_updates)
-    # ------------------------------------------------------------------
 
-    # Celery ContextTask: Ensure tasks run within Flask application context
+    # Celery ContextTask
     class ContextTask(Task):
          def __call__(self, *args, **kwargs):
              with app.app_context():
-                 # Log entry into task context if needed for debugging
-                 # app.logger.debug(f"Entering app context for task {self.name}")
                  return self.run(*args, **kwargs)
-    celery.Task = ContextTask # Make this the default Task class for Celery
+    celery.Task = ContextTask
 
     # Register Blueprints
-    # Import inside function to avoid circular dependencies at module level
-    from app.api import api_bp # Assuming api blueprint is defined in app/api/__init__.py or app/api/routes.py
-    app.register_blueprint(api_bp) # No need for url_prefix here if set in Blueprint
+    from app.api import api_bp
+    app.register_blueprint(api_bp)
 
     # Basic Health Check Route
     @app.route('/health')
     def health_check():
-        # Could add checks here (e.g., DB connection) if needed
         return "OK", 200
 
     return app

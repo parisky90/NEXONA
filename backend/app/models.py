@@ -83,6 +83,23 @@ class Candidate(db.Model):
     # Interview Fields
     interview_datetime = db.Column(db.DateTime(timezone=True), nullable=True)
     interview_location = db.Column(db.String(255), nullable=True)
+    # --- ΝΕΑ ΠΕΔΙΑ ---
+    candidate_confirmation_status = db.Column(
+        db.String(50),
+        nullable=True, # Allow null initially or if no interview scheduled
+        default='Pending',
+        index=True,
+        comment="Status of candidate's confirmation for the scheduled interview (Pending, Confirmed, Declined)"
+    )
+    confirmation_uuid = db.Column(
+        db.String(36), # Store UUID as string
+        unique=True,
+        nullable=True, # Allow null if no interview needs confirmation
+        default=lambda: str(uuid.uuid4()), # Generate a new UUID by default
+        index=True,
+        comment="Unique identifier for interview confirmation links sent to candidate"
+    )
+    # --- ΤΕΛΟΣ ΝΕΩΝ ΠΕΔΙΩΝ ---
 
     # Evaluation Field
     evaluation_rating = db.Column(db.String(50), nullable=True)
@@ -123,7 +140,12 @@ class Candidate(db.Model):
             'current_status': self.current_status, 'positions': self.get_position_names(),
             'notes': self.notes, 'history': self.history,
             'interview_datetime': self.interview_datetime.isoformat() if self.interview_datetime else None,
-            'interview_location': self.interview_location, 'evaluation_rating': self.evaluation_rating,
+            'interview_location': self.interview_location,
+            # --- ΠΡΟΣΘΗΚΗ ΝΕΩΝ ΠΕΔΙΩΝ ΣΤΟ DICT ---
+            'candidate_confirmation_status': self.candidate_confirmation_status,
+            # 'confirmation_uuid': self.confirmation_uuid, # Usually not needed in general API responses
+            # --- ΤΕΛΟΣ ΠΡΟΣΘΗΚΗΣ ---
+            'evaluation_rating': self.evaluation_rating,
             'offer_details': self.offer_details, 'offer_response_date': self.offer_response_date.isoformat() if self.offer_response_date else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,

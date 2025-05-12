@@ -1,19 +1,28 @@
 /* frontend/src/components/CandidateList.css */
-/* v3 - Light Theme Header */
+/* v4 - Added Confirmation Status Badges & Responsive Wrapper */
 
 .candidate-list-container {
   margin-top: 20px;
 }
 
+/* Responsive Table Wrapper */
+.table-responsive {
+  overflow-x: auto; /* Enable horizontal scroll on small screens */
+  -webkit-overflow-scrolling: touch; /* Smoother scrolling on iOS */
+  border: 1px solid var(--border-color); /* Add border to wrapper */
+  border-radius: 5px; /* Match table radius */
+  box-shadow: var(--box-shadow-sm); /* Add shadow to wrapper */
+  margin-top: 15px; /* Added margin-top here instead of table */
+}
+
+
 .candidate-table {
   width: 100%;
-  border-collapse: collapse; /* Use collapse for cleaner lines */
-  margin-top: 15px;
+  border-collapse: collapse;
+  /* Removed margin-top, box-shadow, border, border-radius, overflow
+     as they are now handled by .table-responsive */
   font-size: 0.9rem;
-  box-shadow: var(--box-shadow-sm);
-  border: 1px solid var(--border-color);
-  border-radius: 5px;
-  overflow: hidden; /* Needed for border-radius effect on table */
+  min-width: 750px; /* Set a minimum width before scrollbar appears - adjusted */
 }
 
 .candidate-table th,
@@ -22,7 +31,15 @@
   text-align: left;
   border-bottom: 1px solid var(--border-color); /* Lighter border between rows */
   vertical-align: middle; /* Align cell content vertically */
+  white-space: nowrap; /* Prevent text wrapping in cells initially */
 }
+
+/* Allow wrapping for specific columns if needed */
+.candidate-table td:nth-child(1), /* Name */
+.candidate-table td:nth-child(2) { /* Position(s) */
+  white-space: normal;
+}
+
 
 .candidate-table thead th {
   background-color: var(--content-bg); /* <<< WHITE background */
@@ -34,6 +51,7 @@
   position: sticky; /* Make header sticky within its container if container scrolls */
   top: 0;           /* Requires the container to have overflow */
   z-index: 10;      /* Keep header above rows */
+  white-space: nowrap; /* Keep headers from wrapping */
 }
 
 .candidate-table tbody tr {
@@ -47,37 +65,61 @@
 }
 
 
-.candidate-table tbody tr:hover {
-  background-color: var(--sidebar-bg); /* Very light gray hover */
-}
-
-/* Make row clickable (if link is applied to row or cell) */
-.candidate-table tbody tr.clickable:hover {
+.candidate-table tbody tr.clickable-row:hover {
    cursor: pointer;
+   background-color: var(--sidebar-bg); /* Very light gray hover */
 }
 
-
-.candidate-table td button {
-  /* Basic button styling - adjust as needed */
-  margin-right: 5px;
+/* --- Status Badge Styling --- */
+.status-badge {
   padding: 3px 8px;
+  border-radius: 12px; /* Pill shape */
   font-size: 0.8rem;
-  border-radius: 3px;
-  cursor: pointer;
-  border: 1px solid transparent; /* Base border */
+  font-weight: 500;
+  display: inline-block; /* Needed for padding/border-radius */
+  text-align: center;
+  white-space: nowrap; /* Prevent badge text wrapping */
+  line-height: 1.4; /* Adjust line height for badges */
 }
 
-/* Example button styles */
-.candidate-table td button.btn-view {
-  background-color: var(--primary-color);
-  color: white;
-  border-color: var(--primary-color);
+/* General Candidate Statuses (Ensure these match the classes generated in JSX) */
+.status-badge.status-processing { background-color: #e9ecef; color: #495057; }
+.status-badge.status-needs-review { background-color: #fff3cd; color: #664d03; }
+.status-badge.status-new { background-color: #cfe2ff; color: #0a3678; } /* Example for 'New' */
+.status-badge.status-accepted { background-color: #d1e7dd; color: #0f5132; }
+.status-badge.status-rejected { background-color: #f8d7da; color: #842029; }
+.status-badge.status-interested { background-color: #cfe2ff; color: #0a3678; } /* Example, adjust */
+.status-badge.status-interview { background-color: #e2d9f3; color: #4b2e83; }
+.status-badge.status-declined { background-color: #e9ecef; color: #495057; }
+.status-badge.status-evaluation { background-color: #cff4fc; color: #055160; }
+.status-badge.status-offer-made { background-color: #ffe5d0; color: #8f470a; }
+.status-badge.status-hired { background-color: #a3cfbb; color: #0a3622; } /* Darker Hired */
+.status-badge.status-parsing-failed { background-color: #f8d7da; color: #842029; } /* Like rejected */
+/* Add any other statuses you use */
+
+/* --- Confirmation Status Badges --- */
+.status-badge.status-confirmed {
+  background-color: #d1e7dd; /* Light Green */
+  color: #0f5132; /* Dark Green */
 }
-.candidate-table td button.btn-delete {
-   background-color: #dc3545; /* Red */
-   color: white;
-   border-color: #dc3545;
+
+.status-badge.status-declined {
+  background-color: #f8d7da; /* Light Red */
+  color: #842029; /* Dark Red */
 }
+
+.status-badge.status-pending {
+  background-color: #fff3cd; /* Light Yellow */
+  color: #664d03; /* Dark Yellow/Brown */
+}
+
+.status-badge.status-unknown {
+   color: var(--text-light-gray);
+   background-color: transparent; /* Don't show badge if unknown */
+   padding: 0; /* Reset padding */
+}
+
+/* --- End Status Badge Styling --- */
 
 
 /* Link style within table */
@@ -88,4 +130,27 @@
 }
 .view-link:hover {
     text-decoration: underline;
+}
+
+/* Styles for status messages when list is loading, empty, or has errors */
+.candidate-list-status {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-light-gray);
+  margin-top: 15px;
+}
+
+.candidate-list-status.error {
+  color: #dc3545; /* Red for errors */
+  background-color: #f8d7da;
+  border: 1px solid #f5c2c7;
+  border-radius: 0.25rem;
+  padding: 10px 15px;
+}
+
+.loading-placeholder { /* Style for loading text */
+    padding: 20px;
+    text-align: center;
+    color: var(--text-medium-gray);
+    font-style: italic;
 }

@@ -1,29 +1,48 @@
 // frontend/src/components/InterviewScheduler.jsx
-import React, { useState } from 'react';
-import './InterviewScheduler.css'; // Optional: Add specific styles if needed
+import React, { useState, useEffect } from 'react';
+import './InterviewScheduler.css';
 
-// Accept inputClassName prop and pass it down
-function InterviewScheduler({ onSchedule, disabled, inputClassName = '' }) {
-  const [date, setDate] = useState('');
-  const [time, setTime] = useState('');
-  const [location, setLocation] = useState('');
-  const [error, setError] = useState(''); // Local error state for validation
+function InterviewScheduler({
+  onSchedule,
+  disabled,
+  inputClassName = '',
+  initialDate = '',
+  initialTime = '',
+  initialLocation = ''
+}) {
+  const [date, setDate] = useState(initialDate);
+  const [time, setTime] = useState(initialTime);
+  const [location, setLocation] = useState(initialLocation);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setDate(initialDate);
+    setTime(initialTime);
+    setLocation(initialLocation);
+  }, [initialDate, initialTime, initialLocation]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    setError(''); // Clear previous errors
+    setError('');
     if (!date || !time) {
         setError('Date and Time are required.');
         return;
     }
+    const todayForCheck = new Date();
+    todayForCheck.setHours(0,0,0,0);
+    const selectedDateObj = new Date(date);
+    selectedDateObj.setHours(0,0,0,0);
+
+    if (selectedDateObj < todayForCheck) {
+        setError('Cannot schedule an interview for a past date.');
+        return;
+    }
+
     if (onSchedule) {
       onSchedule({ date, time, location });
     }
-    // Decide if fields should clear after submit
-    // setDate(''); setTime(''); setLocation('');
   };
 
-  // Get today's date in YYYY-MM-DD format for min attribute
   const today = new Date().toISOString().split('T')[0];
 
   return (
@@ -37,11 +56,10 @@ function InterviewScheduler({ onSchedule, disabled, inputClassName = '' }) {
             type="date"
             id="interviewDate"
             value={date}
-            onChange={(e) => setDate(e.target.value)}
+            onChange={(e) => { setDate(e.target.value); setError(''); }}
             required
-            min={today} // Prevent selecting past dates
+            min={today}
             disabled={disabled}
-            // Apply the passed class name (e.g., "input-light-gray")
             className={inputClassName}
           />
         </div>
@@ -51,10 +69,9 @@ function InterviewScheduler({ onSchedule, disabled, inputClassName = '' }) {
             type="time"
             id="interviewTime"
             value={time}
-            onChange={(e) => setTime(e.target.value)}
+            onChange={(e) => { setTime(e.target.value); setError(''); }}
             required
             disabled={disabled}
-            // Apply the passed class name
             className={inputClassName}
           />
         </div>
@@ -66,21 +83,17 @@ function InterviewScheduler({ onSchedule, disabled, inputClassName = '' }) {
             value={location}
             onChange={(e) => setLocation(e.target.value)}
             placeholder="e.g., Office Room 3 / Online Link"
-            // Location might not always be required? Remove 'required' if so.
-            required
             disabled={disabled}
-            // Apply the passed class name
             className={inputClassName}
           />
         </div>
         <button
            type="submit"
            disabled={disabled}
-           // Use a standard action button style or a specific one
-           className="button-action button-primary" // Example using primary style
-           style={{marginTop: '10px'}} // Add some space before button
+           className="button-action button-primary"
+           style={{marginTop: '15px', width: '100%'}}
         >
-          Schedule Interview
+          {disabled ? 'Scheduling...' : 'Schedule Interview'}
         </button>
       </form>
     </div>

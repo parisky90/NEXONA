@@ -1,47 +1,26 @@
 /* frontend/src/components/SearchBar.css */
-.search-bar-form {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem; /* Adjust gap */
-    margin-bottom: 1.5rem;
-    max-width: 600px; /* Allow slightly wider */
-}
+/* v2 - Flex layout for width */
 
-/* Wrapper for input and clear button */
-.search-input-wrapper {
-    position: relative; /* Needed for absolute positioning of clear button */
-    flex-grow: 1; /* Wrapper takes available space */
-    display: flex; /* Align input and button */
+.search-bar-container {
+  display: flex; /* Use flexbox for layout */
+  align-items: center; /* Align input and button vertically */
+  gap: 10px; /* Space between input and button */
+  width: 100%; /* Allow container to take available width */
+  margin-bottom: 20px; /* Space below search bar */
+  /* max-width: 700px; */ /* Optional: Limit max width if desired */
 }
 
 .search-input {
-    flex-grow: 1; /* Input takes full width of wrapper */
-    padding-right: 35px; /* Make space for the clear button */
-    /* Inherit other styles from App.css */
+  flex-grow: 1; /* Allow input to take up most available space */
+  /* Base styles are inherited from App.css inputs */
+  /* Add specific input overrides here if needed, e.g.: */
+  /* height: 38px; /* Ensure consistent height */
+  min-width: 200px; /* Prevent input from becoming too small */
 }
 
 .search-button {
-    flex-shrink: 0; /* Prevent button from shrinking */
-    /* Inherit styles from App.css */
-}
-
-.clear-button {
-    position: absolute; /* Position absolutely within the wrapper */
-    right: 5px; /* Position near the right edge */
-    top: 50%; /* Center vertically */
-    transform: translateY(-50%); /* Fine-tune vertical centering */
-    background: transparent;
-    border: none;
-    color: var(--text-color-secondary);
-    font-size: 1.6em; /* Adjust size */
-    line-height: 1;
-    padding: 0 0.5rem;
-    cursor: pointer;
-    z-index: 2;
-    opacity: 0.7;
-    transition: opacity 0.2s, color 0.2s;
-}
-.clear-button:hover {
-    opacity: 1;
-    color: var(--text-color);
+  flex-shrink: 0; /* Prevent button from shrinking */
+  /* Base styles (.button-action) and specific styles (.button-cancel-schedule) */
+  /* are applied via className prop in the component using SearchBar */
+  /* Add specific button overrides here ONLY if absolutely necessary */
 }

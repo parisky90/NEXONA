@@ -5,7 +5,7 @@ import CandidateList from '../components/CandidateList';
 import SearchBar from '../components/SearchBar';
 import UploadComponent from '../components/UploadComponent';
 import apiClient from '../api';
-// import './DashboardPage.css'; // Optional: Add page-specific styles if needed
+// import './DashboardPage.css'; // Optional page-specific styles
 
 function DashboardPage() {
   const [summaryData, setSummaryData] = useState(null);
@@ -17,20 +17,19 @@ function DashboardPage() {
 
   // Fetch Summary Data
   const fetchSummary = useCallback(async () => {
-    // No need to reset error here, let list fetch handle main error display
     setIsLoadingSummary(true);
+    // Don't clear main error here
     try {
       const res = await apiClient.get('/dashboard/summary');
       setSummaryData(res.data);
     } catch (err) {
       console.error("Error fetching summary:", err);
-      // Set error only if list isn't already showing an error
       if (!error) setError(err.response?.data?.error || 'Failed to load summary data.');
-      setSummaryData(null); // Clear on error
+      setSummaryData(null);
     } finally {
       setIsLoadingSummary(false);
     }
-  }, [error]); // Re-fetch summary if error state changes (maybe not needed?)
+  }, [error]); // Depend on error state? Maybe not.
 
   // Fetch Candidate List (NeedsReview or Search within NeedsReview)
   const fetchCandidates = useCallback(async (query = '') => {
@@ -44,12 +43,13 @@ function DashboardPage() {
       setCandidates(res.data);
     } catch (err) {
       console.error("Error fetching candidates:", err);
+      // Prioritize showing list error
       setError(err.response?.data?.error || 'Failed to load candidates.');
       setCandidates([]); // Clear data on error
     } finally {
       setIsLoadingList(false);
     }
-  }, []); // Search term is handled via query param, no need in deps
+  }, []); // No dependency on search term here, passed as arg
 
   // Initial data fetch
   useEffect(() => {
@@ -60,15 +60,18 @@ function DashboardPage() {
   // Search Handlers
   const handleSearchChange = (event) => {
     setSearchTerm(event.target.value);
+     // Decide if real-time search is wanted vs. button click
+     // If real-time: fetchCandidates(event.target.value);
   };
+
   const handleSearchSubmit = () => {
-    fetchCandidates(searchTerm); // Fetch based on search term
+    // Trigger search only when button is clicked or Enter is pressed
+    fetchCandidates(searchTerm);
   };
 
   // Upload Success Handler
   const handleUploadSuccess = () => {
     console.log("Upload success detected in Dashboard, refreshing data...");
-    // Refresh both summary and list
     // Add slight delay to allow backend processing maybe?
     setTimeout(() => {
         fetchSummary();
@@ -77,29 +80,27 @@ function DashboardPage() {
   }
 
   return (
-    <div className="dashboard-page"> {/* Add specific class if needed */}
+    <div className="dashboard-page">
       {/* Render Summary */}
       {isLoadingSummary ? <p>Loading summary...</p> : null}
       {summaryData && <DashboardSummary summary={summaryData} />}
-      {/* Show error only if summary specifically failed and list isn't loading/failed */}
       {error && !summaryData && !isLoadingList && <p className="error-message">Error loading summary: {error}</p>}
 
       {/* Render Upload Component */}
       <UploadComponent onUploadSuccess={handleUploadSuccess} />
 
-      {/* Render Search Bar for the list below */}
+      {/* Render Search Bar */}
       <SearchBar
           searchTerm={searchTerm}
           onSearchChange={handleSearchChange}
           onSearchSubmit={handleSearchSubmit}
-          placeholder="Search Needs Review by Name or Position..."
+          placeholder="Search Needs Review by Name, Position, or Phone..." // Updated placeholder
           inputClassName="input-light-gray"   // Apply specific input style
-          buttonClassName="button-navy-blue" // Apply specific button style
+          buttonClassName="button-cancel-schedule" // <<< USE LIGHT BLUE BUTTON STYLE
       />
 
       {/* Render Candidate List */}
       {isLoadingList && <p>Loading candidates...</p>}
-      {/* Show list-related error preferentially */}
       {error && !isLoadingList && <p className="error-message">Error loading candidates: {error}</p>}
       {!isLoadingList && !error && (
         <CandidateList candidates={candidates} listTitle="Candidates Needing Review" />
