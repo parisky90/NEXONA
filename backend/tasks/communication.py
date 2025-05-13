@@ -24,7 +24,7 @@ def get_app_context():
     return app.app_context()
 
 # --- Rejection Email Task ---
-@celery.task(bind=True, name='tasks.communication.send_rejection_email', max_retries=5)
+@celery.task(bind=True, name='tasks.communication.send_rejection_email_task', max_retries=5)
 def send_rejection_email_task(self, candidate_id):
     """Sends the standard rejection email."""
     # Get config values within the task context
@@ -89,7 +89,7 @@ def send_rejection_email_task(self, candidate_id):
             return f"Failed to send rejection email for {candidate_id}."
 
 # --- Interview Reminder Email Task (to Recruiter/User) ---
-@celery.task(bind=True, name='tasks.communication.send_interview_reminder_email', max_retries=3)
+@celery.task(bind=True, name='tasks.communication.send_interview_reminder_email_task', max_retries=3)
 def send_interview_reminder_email_task(self, user_email, candidate_name, interview_datetime_iso, interview_location):
     """Sends an interview reminder email to a user (HR personnel)."""
     with get_app_context():
@@ -160,7 +160,7 @@ def send_interview_reminder_email_task(self, user_email, candidate_name, intervi
 
 
 # --- ΝΕΟ TASK: Αποστολή Πρόσκλησης Συνέντευξης στον Υποψήφιο ---
-@celery.task(bind=True, name='tasks.communication.send_interview_invitation_email', max_retries=3, default_retry_delay=120)
+@celery.task(bind=True, name='tasks.communication.send_interview_invitation_email_task', max_retries=3, default_retry_delay=120)
 def send_interview_invitation_email(self, candidate_id):
     """Sends an interview invitation email to the candidate with confirmation links."""
     with get_app_context():

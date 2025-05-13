@@ -1,134 +1,180 @@
 # backend/tasks/reminders.py
-
-# --- Corrected Imports ---
-from flask import current_app # Import from Flask ONLY if needed inside task (currently not used directly)
-from app import celery, db    # Import celery & db from app package
-
-# Using direct import assuming structure allows it
-try:
-    from .communication import send_interview_reminder_email_task
-    TASK_TRIGGER_METHOD = 'direct'
-except ImportError as e:
-    TASK_TRIGGER_METHOD = 'by_name'
-    pass # Continue, will use send_task by name
-
-from app.models import User, Candidate
-from datetime import datetime, timedelta, timezone
+from app import celery, db  # Import celery & db from app package
+from app.models import User, Candidate, CompanySettings  # Import your models
+from datetime import datetime, timedelta, timezone as dt_timezone  # Renamed to avoid conflict
 import logging
 
+# It's good practice to get the logger for the current module
 logger = logging.getLogger(__name__)
-# --- End Corrected Imports ---
+
+# Attempt to import the email sending task directly for type hinting and direct calls
+# Fallback to send_task by name if direct import fails (e.g., circular dependency if not careful)
+try:
+    from .communication import send_interview_reminder_email_task  # Assuming this task exists
+
+    TASK_TRIGGER_METHOD = 'direct'
+except ImportError:
+    logger.warning("Could not import 'send_interview_reminder_email_task' directly. Will use celery.send_task by name.")
+    TASK_TRIGGER_METHOD = 'by_name'
+    send_interview_reminder_email_task = None  # To satisfy linters if direct call is attempted
 
 
 @celery.task(name='tasks.reminders.check_upcoming_interviews')
 def check_upcoming_interviews():
     """
-    Scheduled task to find upcoming interviews and trigger notifications.
-    App context is provided by ContextTask.
+    Scheduled task to find upcoming interviews and trigger notifications
+    based on individual user preferences and company-level settings.
+    App context is provided by ContextTask in app/__init__.py.
     """
     logger.info("[REMINDER TASK START] Checking for upcoming interviews...")
 
     try:
-        users_to_notify = User.query.filter_by(enable_interview_reminders=True).all()
-
-        if not users_to_notify:
-            logger.info("[REMINDER TASK] No users have reminders enabled.")
-            return "No users opted-in for reminders."
-
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(dt_timezone.utc)
         logger.debug(f"[REMINDER TASK] Current UTC time: {now_utc.isoformat()}")
 
-        total_reminders_sent = 0
-        processed_interviews = set()
+        # Fetch all users who have email reminders enabled at the user level
+        # and are active.
+        users_wanting_reminders = User.query.filter_by(
+            enable_email_interview_reminders=True,
+            is_active=True
+        ).all()
 
-        for user in users_to_notify:
-            lead_time_minutes = user.reminder_lead_time_minutes
-            email_reminders_enabled = user.email_interview_reminders # Get pref from user object
+        if not users_wanting_reminders:
+            logger.info("[REMINDER TASK] No active users have email interview reminders enabled. Exiting.")
+            return "No users opted-in for reminders or active."
 
-            logger.debug(f"[REMINDER TASK] Processing User ID: {user.id} ({user.username}). Lead Time: {lead_time_minutes} mins, Email Enabled: {email_reminders_enabled}")
+        logger.info(f"[REMINDER TASK] Found {len(users_wanting_reminders)} user(s) with email reminders enabled.")
 
-            if not (isinstance(lead_time_minutes, int) and 5 <= lead_time_minutes <= 1440):
-                logger.warning(f"[REMINDER TASK] User {user.id} has invalid lead time ({lead_time_minutes}), skipping.")
+        # Fetch company settings to check if the reminder feature is enabled for their company
+        # We can optimize this by fetching only for companies of the users found, if many companies exist.
+        all_company_settings = {cs.company_id: cs for cs in CompanySettings.query.all()}
+
+        total_reminders_sent_this_run = 0
+        processed_interview_user_pairs = set()  # To avoid sending multiple reminders for the same interview to the same user in one run
+
+        for user in users_wanting_reminders:
+            if not user.email:
+                logger.warning(
+                    f"[REMINDER TASK] User ID {user.id} ({user.username}) has reminders enabled but no email address. Skipping.")
                 continue
 
-            reminder_target_time_start = now_utc + timedelta(minutes=lead_time_minutes)
+            if user.company_id:
+                company_setting = all_company_settings.get(user.company_id)
+                if not (company_setting and company_setting.enable_reminders_feature_for_company):
+                    logger.info(
+                        f"[REMINDER TASK] Reminder feature disabled at company level (ID: {user.company_id}) for user {user.id}. Skipping.")
+                    continue
+            # If user has no company_id (e.g. superadmin), they can still get reminders if they are interviewers.
 
-            # --- Using NARROW WINDOW (+/- 1 min) ---
-            window_minutes = 1
-            window_start = reminder_target_time_start - timedelta(minutes=window_minutes)
-            window_end = reminder_target_time_start + timedelta(minutes=window_minutes)
-            # --- END NARROW WINDOW ---
+            lead_time_minutes = user.interview_reminder_lead_time_minutes
+            if not (isinstance(lead_time_minutes, int) and 1 <= lead_time_minutes <= 2880):  # e.g., 1 min to 2 days
+                logger.warning(
+                    f"[REMINDER TASK] User {user.id} has invalid lead time ({lead_time_minutes} mins). Using company default or global default if applicable, or skipping.")
+                # Optionally, use company_setting.default_interview_reminder_timing_minutes or a global default.
+                # For now, we'll skip if user's setting is invalid.
+                continue
 
-            logger.debug(f"[REMINDER TASK] Query Window (UTC): {window_start.isoformat()} to {window_end.isoformat()}")
+            # Calculate the target time window for interviews
+            # The interview should be scheduled around (now_utc + lead_time_minutes)
+            # We create a small window around this target to catch interviews scheduled exactly at that time.
+            reminder_target_time = now_utc + timedelta(minutes=lead_time_minutes)
 
-            interviews_in_window = Candidate.query.filter(
-                Candidate.current_status == 'Interview',
-                Candidate.interview_datetime > window_start,
-                Candidate.interview_datetime <= window_end
-            ).all()
+            # Define a small window (e.g., +/- 1 minute of the scheduler's run frequency)
+            # to ensure we catch interviews that fall exactly on the minute.
+            # Celery beat might not run at the *exact* second every time.
+            window_start = reminder_target_time - timedelta(minutes=1)  # Check 1 minute before target
+            window_end = reminder_target_time + timedelta(minutes=1)  # Check 1 minute after target
 
-            # Log if candidates were found by the query, BEFORE checking email prefs
-            if interviews_in_window:
-                logger.info(f"[REMINDER TASK] Found {len(interviews_in_window)} upcoming interview(s) for user {user.id} within the time window.")
-                for cand in interviews_in_window:
-                     logger.debug(f"  - Candidate ID: {cand.candidate_id}, Interview Time (UTC): {cand.interview_datetime.isoformat() if cand.interview_datetime else 'NULL'}")
-            else:
-                 logger.debug(f"[REMINDER TASK] No interviews found within the calculated {window_minutes*2} min window for user {user.id}.")
-                 continue # Go to next user if no interviews found for this one
+            logger.debug(
+                f"[REMINDER TASK] User {user.id}: Lead time {lead_time_minutes} mins. Target window (UTC): {window_start.isoformat()} to {window_end.isoformat()}")
 
+            # Find candidates with interviews in this window.
+            # This query assumes the user (recruiter/admin) wants reminders for *any* interview
+            # in their company scheduled around their preferred lead time.
+            # If reminders are only for interviews where they are listed as an interviewer,
+            # the query needs to be more specific (joining with Candidate.interviewers JSONB field).
+            # For now, let's assume they get reminders for candidates in their company_id (if set)
+            # OR if they are superadmin, for any candidate.
 
-            # --- START: ADDED DEBUG LOGGING FOR EMAIL CHECK ---
-            # Process reminders only if email is enabled AND user has email
-            if email_reminders_enabled and user.email:
-                # Log that the condition passed
-                logger.info(f"[REMINDER TASK EMAIL CHECK - PASSED] Will attempt trigger: email_reminders_enabled={email_reminders_enabled}, user.email='{user.email}'")
-                for candidate in interviews_in_window:
-                    interview_key = (candidate.candidate_id, candidate.interview_datetime)
-                    if interview_key in processed_interviews:
-                        logger.debug(f"Skipping already processed interview in this run: {candidate.candidate_id}")
-                        continue
+            query = Candidate.query.filter(
+                Candidate.interview_datetime >= window_start,
+                Candidate.interview_datetime <= window_end,
+                Candidate.current_status.ilike('%Interview%')  # Or a more specific status like 'Interview Scheduled'
+            )
 
-                    try:
-                        candidate_name = candidate.get_full_name()
-                        interview_dt_iso = candidate.interview_datetime.isoformat() if candidate.interview_datetime else None
-                        interview_loc = candidate.interview_location or "Not specified"
+            if user.company_id and user.role != 'superadmin':  # Scope to user's company if not superadmin
+                query = query.filter(Candidate.company_id == user.company_id)
 
-                        if not interview_dt_iso:
-                            logger.warning(f"Skipping reminder: Candidate {candidate.candidate_id} missing interview datetime.")
-                            continue
+            # Further refinement: Check if user.id is in Candidate.interviewers list
+            # This requires JSONB query capabilities if interviewers are stored as a list of user IDs.
+            # For simplicity now, we'll notify if the interview is in their company (or any for superadmin).
+            # A more robust solution would be:
+            # from sqlalchemy.dialects.postgresql import JSONB
+            # query = query.filter(Candidate.interviewers.contains(db.cast([user.id], JSONB)))
 
-                        logger.info(f"[REMINDER TASK] Triggering reminder email task for {user.email} about candidate {candidate.candidate_id} ({candidate_name})")
+            candidates_for_reminder = query.all()
 
-                        if TASK_TRIGGER_METHOD == 'direct':
-                             send_interview_reminder_email_task.delay(
-                                 user_email=user.email, candidate_name=candidate_name,
-                                 interview_datetime_iso=interview_dt_iso, interview_location=interview_loc
-                             )
-                        else: # Fallback by name
-                             celery.send_task(
-                                 'tasks.communication.send_interview_reminder_email',
-                                 args=[user.email, candidate_name, interview_dt_iso, interview_loc]
-                             )
+            if not candidates_for_reminder:
+                logger.debug(f"[REMINDER TASK] No interviews found for user {user.id} in their target window.")
+                continue
 
-                        processed_interviews.add(interview_key)
-                        total_reminders_sent += 1
+            logger.info(
+                f"[REMINDER TASK] Found {len(candidates_for_reminder)} interview(s) for user {user.id} in window.")
 
-                    except Exception as trigger_err:
-                        logger.error(f"[REMINDER TASK] Failed trigger email task for user {user.id}, candidate {candidate.candidate_id}: {trigger_err}", exc_info=True)
-            else:
-                 # Log that the condition failed IF interviews were found
-                 if interviews_in_window:
-                     logger.warning(f"[REMINDER TASK EMAIL CHECK - FAILED] Condition not met: email_reminders_enabled={email_reminders_enabled}, user.email='{user.email}'. No email will be triggered.")
-                     # Log specific reason (optional but helpful)
-                     if not email_reminders_enabled: logger.warning(f"[REMINDER TASK] Detail: Email reminders explicitly disabled for user {user.id}.")
-                     if not user.email: logger.warning(f"[REMINDER TASK] Detail: User {user.id} has no email address.")
+            for candidate in candidates_for_reminder:
+                interview_user_key = (candidate.candidate_id, user.id)
+                if interview_user_key in processed_interview_user_pairs:
+                    logger.debug(
+                        f"User {user.id} already processed for interview with {candidate.candidate_id} in this run. Skipping.")
+                    continue
 
-            # --- END: ADDED DEBUG LOGGING FOR EMAIL CHECK ---
+                candidate_name = candidate.get_full_name()
+                interview_dt_iso = candidate.interview_datetime.isoformat()
+                interview_loc = candidate.interview_location or "Not specified"
+                position_names = ", ".join(candidate.get_position_names()) or "N/A"
 
+                logger.info(f"[REMINDER TASK] Triggering reminder for User ID: {user.id} ({user.email}) "
+                            f"about Candidate: {candidate.candidate_id} ({candidate_name}) "
+                            f"Interview Time: {interview_dt_iso} "
+                            f"Position(s): {position_names}")
+                try:
+                    if TASK_TRIGGER_METHOD == 'direct' and send_interview_reminder_email_task:
+                        send_interview_reminder_email_task.delay(
+                            user_email=user.email,
+                            user_first_name=user.username,  # Or a first_name field if you add it
+                            candidate_name=candidate_name,
+                            interview_datetime_iso=interview_dt_iso,
+                            interview_location=interview_loc,
+                            position_names=position_names,
+                            lead_time_minutes=lead_time_minutes
+                        )
+                    else:  # Fallback by name
+                        celery.send_task(
+                            'tasks.communication.send_interview_reminder_email_task',
+                            # Ensure this name matches the task in communication.py
+                            args=[
+                                user.email,
+                                user.username,  # Or a first_name field
+                                candidate_name,
+                                interview_dt_iso,
+                                interview_loc,
+                                position_names,
+                                lead_time_minutes
+                            ]
+                        )
+                    processed_interview_user_pairs.add(interview_user_key)
+                    total_reminders_sent_this_run += 1
+                except Exception as trigger_err:
+                    logger.error(
+                        f"[REMINDER TASK] Failed to trigger email task for user {user.id}, candidate {candidate.candidate_id}: {trigger_err}",
+                        exc_info=True)
 
-        logger.info(f"[REMINDER TASK END] Check complete. Found candidates matching window: {len(processed_interviews)}. Email reminders triggered: {total_reminders_sent}.") # Updated log
-        return f"Checked reminders. Matched interviews: {len(processed_interviews)}. Triggered emails: {total_reminders_sent}."
+        logger.info(
+            f"[REMINDER TASK END] Check complete. Total email reminders triggered in this run: {total_reminders_sent_this_run}.")
+        return f"Checked reminders. Triggered emails: {total_reminders_sent_this_run}."
 
     except Exception as e:
+        db.session.rollback()  # Rollback in case of any db error during query
         logger.error(f"[REMINDER TASK FAIL] Unexpected error in check_upcoming_interviews: {e}", exc_info=True)
+        # Consider re-raising or specific retry logic if needed
         return "Reminder check failed unexpectedly."

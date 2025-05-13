@@ -7,11 +7,16 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 try:
-    from config import get_config
+    # Assuming create_seed_data.py is in backend/
+    # and config.py is in backend/app/config.py
+    # and __init__.py is in backend/app/__init__.py
+    from app.config import get_config # Άλλαξε αυτό για να παίρνει το config από το app/
     from app import create_app, db
-    from app.models import User, Company, CompanySettings
+    from app.models import User, Company, CompanySettings # Αυτά είναι ΟΚ
 except ImportError as e:
     print(f"Error importing modules in create_seed_data.py: {e}")
+    # ... (το υπόλοιπο error handling)
+    sys.exit(1)
     print("Please ensure that backend/config.py and backend/app exist and are importable.")
     print(f"Current sys.path: {sys.path}")
     sys.exit(1)

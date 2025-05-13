@@ -11,8 +11,8 @@ from datetime import datetime, timezone # For potentially adding timestamps to n
 # Basic logger for this module
 logger = logging.getLogger(__name__)
 
-@celery.task(bind=True, name='tasks.parse_cv')
-def parse_cv_task(self, candidate_id, s3_file_key):
+@celery.task(bind=True, name='tasks.parsing.parse_cv_task')
+def parse_cv_task(self, candidate_id, s3_file_key, company_id):
     """
     Celery task to parse a CV using Textkernel service and update the database.
     """
