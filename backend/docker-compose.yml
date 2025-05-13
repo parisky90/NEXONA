@@ -43,6 +43,7 @@ services:
       - .env # Load environment variables from .env file
     environment:
       # Explicitly set FLASK_APP if needed, though run.py might be default
+      - PYTHONDONTWRITEBYTECODE=1
       - FLASK_APP=run.py
       # FLASK_ENV=development is often set in .env, ensure it's consistent
     depends_on:

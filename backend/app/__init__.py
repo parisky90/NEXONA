@@ -13,7 +13,7 @@ import sys
 # --- Corrected config import ---
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 try:
-    from config import get_config
+    from config import get_config  # Use the get_config function
 except ImportError as e:
     print(f"CRITICAL: Could not import 'get_config' from 'config'. Error: {e}")
     print(f"Sys.path: {sys.path}")
@@ -39,13 +39,13 @@ celery = Celery(__name__,
 
 @login_manager.user_loader
 def load_user(user_id):
-    from app.models import User
+    from app.models import User  # Import here to avoid circularity
     try:
         return User.query.get(int(user_id))
     except ValueError:
         return None
     except Exception as e:
-        current_app_logger = logging.getLogger(__name__)
+        current_app_logger = logging.getLogger(__name__)  # Get a logger instance
         current_app_logger.error(f"Error loading user {user_id}: {e}", exc_info=True)
         return None
 
@@ -56,20 +56,17 @@ def create_app(config_name_or_class=None):
     # --- Load Config ---
     if isinstance(config_name_or_class, str):
         chosen_config = get_config()
-        # app.logger.info(f"Loading configuration by name (FLASK_ENV or default): {os.environ.get('FLASK_ENV', 'default')}")
     elif config_name_or_class is not None and not isinstance(config_name_or_class, str):
         chosen_config = config_name_or_class
-        # app.logger.info(f"Loading configuration from direct class: {config_name_or_class.__name__}")
     else:
         chosen_config = get_config()
-        # app.logger.info(f"Loading configuration by FLASK_ENV or default: {os.environ.get('FLASK_ENV', 'default')}")
 
     app.config.from_object(chosen_config)
     # --- End Load Config ---
 
     # Startup Logging
     try:
-        startup_logger = logging.getLogger(f"{app.name}.startup")  # Use app.name for logger
+        startup_logger = logging.getLogger(f"{app.name}.startup")
         if not startup_logger.hasHandlers():
             startup_logger.setLevel(logging.INFO)
             startup_handler = logging.StreamHandler(sys.stdout)
@@ -151,8 +148,31 @@ def create_app(config_name_or_class=None):
     celery.Task = ContextTask
 
     # Register Blueprints
-    from app.api import api_bp  # <--- Η ΔΙΟΡΘΩΣΗ ΕΙΝΑΙ ΕΔΩ
+    from app.api import api_bp
     app.register_blueprint(api_bp, url_prefix='/api/v1')
+
+    from app.api.routes_admin import admin_bp as admin_api_blueprint
+    app.register_blueprint(admin_api_blueprint)
+
+    from app.api.routes_company_admin import company_admin_bp
+    app.register_blueprint(company_admin_bp, url_prefix='/api/v1')
+
+    # --- DEBUG: Print all registered routes (ΠΡΟΣΘΗΚΗ ΕΔΩ) ---
+    # Αυτό θα τυπωθεί μία φορά όταν δημιουργείται το app instance.
+    # Για να το δούμε καθαρά στα logs του Docker, το κάνουμε print αντί για app.logger.info
+    # καθώς το app.logger μπορεί να μην είναι πλήρως ρυθμισμένο ακόμα ή να φιλτράρεται.
+    if app.debug or os.environ.get('FLASK_ENV') == 'development':  # Τύπωσε μόνο σε development
+        print("\n" + "=" * 60)
+        print("DEBUG: REGISTERED FLASK ROUTES AT END OF CREATE_APP")
+        print("=" * 60)
+        for rule in sorted(app.url_map.iter_rules(), key=lambda r: r.rule):
+            # Παράλειψε τα 'static' και '_debug_toolbar' αν υπάρχει
+            if rule.endpoint in ('static', '_debug_toolbar.static', '_debug_toolbar.redirect_to_build'):
+                continue
+            print(f"Endpoint: {rule.endpoint:40s} Route: {rule.rule:50s} Methods: {','.join(rule.methods)}")
+        print("=" * 60 + "\n")
+
+    # --- END DEBUG ---
 
     @app.route('/health')
     def health_check():
