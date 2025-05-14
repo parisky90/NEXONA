@@ -1,14 +1,14 @@
 // frontend/src/components/DashboardSummary.jsx
 import React from 'react';
-import './DashboardSummary.css'; // Import the updated CSS
+import './DashboardSummary.css'; // Βεβαιώσου ότι το CSS υπάρχει και είναι σωστό
 
-// Enhanced mapping for better labels if needed
+// --- ΔΙΟΡΘΩΣΗ ΟΝΟΜΑΤΟΣ ΚΛΕΙΔΙΟΥ ---
 const statusLabelMapping = {
-  total_cvs: 'Total CVs',
+  total_candidates: 'Total Candidates', // Άλλαξε από total_cvs
   Processing: 'Processing',
   ParsingFailed: 'Parsing Failed',
   NeedsReview: 'Needs Review',
-  New: 'New', // Or hide this if 'NeedsReview' covers it
+  New: 'New',
   Accepted: 'Accepted',
   Interested: 'Interested',
   Interview: 'Interview',
@@ -17,37 +17,71 @@ const statusLabelMapping = {
   OfferMade: 'Offer Made',
   Hired: 'Hired',
   Rejected: 'Rejected',
-  // Add other statuses if present in your data
+  // Πρόσθεσε το 'On Hold' αν το χρησιμοποιείς και στο backend summary
+  'On_Hold': 'On Hold', // Αν το backend στέλνει 'On_Hold'
+  // ή 'On Hold': 'On Hold' αν το backend στέλνει 'On Hold'
 };
 
-// Define the order and which statuses to display
+// --- ΔΙΟΡΘΩΣΗ ΟΝΟΜΑΤΟΣ ΚΛΕΙΔΙΟΥ ---
 const displayOrder = [
-  'total_cvs',
+  'total_candidates', // Άλλαξε από total_cvs
   'NeedsReview',
-  'Accepted',
-  'Interview', // Moved up
-  'OfferMade', // Moved up
+  'Processing', // Πρόσθεσα το Processing αν θέλεις να το βλέπεις
+  'Interested', // Σειρά που μπορεί να βγάζει νόημα
+  'Interview',
+  'Evaluation',
+  'OfferMade',
+  'Accepted', // Πριν το Hired
   'Hired',
-  'Rejected', // Moved down
+  'Rejected',
+  'Declined',
+  'ParsingFailed', // Ίσως στο τέλος ή κοντά στο Processing
+  'On_Hold' // Αν το έχεις
 ];
+// --- ΤΕΛΟΣ ΔΙΟΡΘΩΣΕΩΝ ---
 
 
 function DashboardSummary({ summary }) {
   if (!summary) {
-    return <div className="dashboard-summary-container"><p>Loading summary...</p></div>;
+    // Μπορείς να δείξεις ένα πιο διακριτικό loading state εδώ αν θέλεις
+    return (
+      <div className="dashboard-summary-container">
+        <div className="dashboard-summary-row">
+          {displayOrder.map(key => (
+            <div key={key} className="summary-item" style={{ opacity: 0.5 }}>
+              <span className="count">-</span>
+              <span className="label">{statusLabelMapping[key] || key}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   }
 
-  // Create display items based on the desired order and mapping
+  // Δημιουργία των αντικειμένων προς εμφάνιση
   const displayItems = displayOrder
-    .map(key => ({
-      status: key,
-      count: summary[key] !== undefined ? summary[key] : 'N/A', // Handle missing keys gracefully
-      label: statusLabelMapping[key] || key // Use mapping or fallback to key
-    }));
+    .map(key => {
+      // Έλεγχos αν το κλειδί υπάρχει στο summary και αν η τιμή είναι αριθμός
+      const countValue = summary[key];
+      const displayCount = (typeof countValue === 'number') ? countValue : 'N/A';
+      
+      // Αν το κλειδί δεν υπάρχει καθόλου στο summary object, μπορείς να το παραλείψεις
+      // ή να δείξεις N/A. Για τώρα, δείχνουμε N/A.
+      if (summary[key] === undefined && key !== 'total_candidates' && !Object.prototype.hasOwnProperty.call(summary, key)) {
+        // console.warn(`DashboardSummary: Key "${key}" not found in summary object.`);
+        // return null; // Για να το παραλείψεις εντελώς
+      }
+
+      return {
+        status: key,
+        count: displayCount,
+        label: statusLabelMapping[key] || key.replace(/_/g, ' ') // Καλύτερο fallback για το label
+      };
+    })
+    .filter(item => item !== null); // Φιλτράρισμα των null αν αποφασίσεις να παραλείψεις κλειδιά
 
 
   return (
-    // Wrap in the new container divs
     <div className="dashboard-summary-container">
       <div className="dashboard-summary-row">
         {displayItems.map(item => (

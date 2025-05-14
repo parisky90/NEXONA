@@ -1,50 +1,74 @@
 // frontend/src/pages/LoginPage.jsx
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom'; // Πρόσθεσα το Link
+import { useNavigate, Link } from 'react-router-dom';
 import apiClient from '../api';
-import { useAuth } from '../App'; // Για να καλέσεις τη login συνάρτηση του context
-import '../AuthForm.css'; // Ένα επίπεδο πάνω από το 'pages'
+import { useAuth } from '../App';
+import '../AuthForm.css'; // Βεβαιώσου ότι το path είναι σωστό (ένα επίπεδο πάνω)
 
 function LoginPage() {
-  const [username, setUsername] = useState(''); // Μπορεί να είναι username ή email
+  // --- ΑΛΛΑΓΗ ΟΝΟΜΑΤΟΣ STATE VARIABLE ---
+  const [loginIdentifier, setLoginIdentifier] = useState(''); // Από username σε loginIdentifier
+  // --- ΤΕΛΟΣ ΑΛΛΑΓΗΣ ---
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
-  const { login } = useAuth(); // Πάρε τη login από το context
+  const { login } = useAuth();
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
     try {
-      const response = await apiClient.post('/login', { username, password });
-      // Το backend επιστρέφει το user object στο response.data.user
-      login(response.data.user); // Ενημέρωσε το context με τα στοιχεία του χρήστη
-      navigate('/dashboard'); // Πήγαινε στο dashboard μετά το επιτυχές login
+      // --- ΑΛΛΑΓΗ ΣΤΟ PAYLOAD ---
+      const response = await apiClient.post('/login', {
+        login_identifier: loginIdentifier, // Στέλνουμε login_identifier
+        password: password
+      });
+      // --- ΤΕΛΟΣ ΑΛΛΑΓΗΣ ---
+      
+      if (response.data && response.data.user) {
+        login(response.data.user);
+        navigate('/dashboard');
+      } else {
+        // Αυτό δεν θα έπρεπε να συμβεί αν το backend επιστρέφει σωστά το user object
+        setError('Login successful, but no user data received.');
+        console.error("Login successful but no user data in response:", response.data);
+      }
     } catch (err) {
-      console.error("Login error:", err);
-      setError(err.response?.data?.error || 'Login failed. Please check your credentials.');
+      console.error("Login error object:", err);
+      if (err.response) {
+        console.error("Login error response data:", err.response.data);
+        setError(err.response.data?.error || `Login failed. Status: ${err.response.status}`);
+      } else if (err.request) {
+        setError('Login failed: No response from server. Please check network connection and if the backend is running.');
+      } else {
+        setError('Login failed: An unexpected error occurred.');
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="auth-container card-style"> {/* Χρησιμοποίησε το κοινό class */}
+    // Το AuthForm.css θα πρέπει να είναι ένα επίπεδο πάνω (../AuthForm.css)
+    // ή να προσαρμόσεις το import path ανάλογα με τη δομή σου.
+    // Υποθέτοντας ότι το AuthForm.css είναι στο src/AuthForm.css
+    // και το LoginPage.jsx είναι στο src/pages/LoginPage.jsx, τότε το ../AuthForm.css είναι σωστό.
+    <div className="auth-container card-style">
       <h2>Login to NEXONA</h2>
       <form onSubmit={handleLogin} className="auth-form">
         {error && <p className="error-message">{error}</p>}
         <div className="form-group">
-          <label htmlFor="username">Username or Email:</label>
+          <label htmlFor="loginIdentifier">Username or Email:</label> {/* Άλλαξε και το htmlFor */}
           <input
             type="text"
-            id="username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
+            id="loginIdentifier" // Άλλαξε και το id
+            value={loginIdentifier} // Χρησιμοποιεί το νέο state
+            onChange={(e) => setLoginIdentifier(e.target.value)} // Ενημερώνει το νέο state
             required
-            className="input-light-gray"
-            autoComplete="username"
+            className="input-light-gray" // Εφάρμοσε το style σου
+            autoComplete="username" // Το autocomplete μπορεί να παραμείνει username
           />
         </div>
         <div className="form-group">
@@ -55,7 +79,7 @@ function LoginPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            className="input-light-gray"
+            className="input-light-gray" // Εφάρμοσε το style σου
             autoComplete="current-password"
           />
         </div>
@@ -63,11 +87,9 @@ function LoginPage() {
           {isLoading ? 'Logging in...' : 'Login'}
         </button>
       </form>
-      {/* --- ΠΡΟΣΘΗΚΗ LINK ΓΙΑ REGISTER --- */}
       <p className="auth-link">
         Don't have an account? <Link to="/register">Register here</Link>
       </p>
-      {/* --- ΤΕΛΟΣ ΠΡΟΣΘΗΚΗΣ LINK --- */}
     </div>
   );
 }
