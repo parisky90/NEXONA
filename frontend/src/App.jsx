@@ -3,7 +3,7 @@ import React, { useState, useEffect, createContext, useContext } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import './App.css';
 import apiClient from './api';
-import Layout from './components/Layout'; // Το υπάρχον Layout
+import Layout from './components/Layout';
 import DashboardPage from './pages/DashboardPage';
 import CandidateDetailPage from './pages/CandidateDetailPage';
 import SettingsPage from './pages/SettingsPage';
@@ -11,14 +11,12 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import NotFoundPage from './pages/NotFoundPage';
 import CandidateListPage from './pages/CandidateListPage';
+import AdminLayout from './pages/AdminLayout';
+import AdminCompaniesPage from './pages/AdminCompaniesPage';
+import AdminUsersPage from './pages/AdminUsersPage';
+import CompanyUsersPage from './pages/CompanyUsersPage'; // <--- ΝΕΟ IMPORT
 
-// --- ΝΕΑ IMPORTS ΓΙΑ ADMIN ---
-import AdminLayout from './pages/AdminLayout'; // Το νέο Admin Layout
-import AdminCompaniesPage from './pages/AdminCompaniesPage'; // Θα το φτιάξουμε
-import AdminUsersPage from './pages/AdminUsersPage';     // Θα το φτιάξουμε
-// -----------------------------
-
-export const AuthContext = createContext(null); // Μετακίνησε το export εδώ για να είναι πιο σαφές
+export const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
 
 function App() {
@@ -32,7 +30,7 @@ function App() {
         const response = await apiClient.get('/session');
         if (response.data && response.data.authenticated) {
           setCurrentUser(response.data.user);
-          console.log("User loaded from session:", response.data.user); // Debug log
+          console.log("User loaded from session:", response.data.user);
         } else {
           setCurrentUser(null);
         }
@@ -48,16 +46,16 @@ function App() {
 
   const login = (userData) => {
     setCurrentUser(userData);
-    console.log("User logged in:", userData); // Debug log
+    console.log("User logged in:", userData);
   };
   const logout = async () => {
     try {
       await apiClient.post('/logout');
       setCurrentUser(null);
-      console.log("User logged out"); // Debug log
+      console.log("User logged out");
     } catch (error) {
       console.error("Logout failed:", error);
-      setCurrentUser(null); // Βεβαιώσου ότι ο χρήστης αποσυνδέεται ακόμα κι αν το API call αποτύχει
+      setCurrentUser(null);
     }
   };
 
@@ -71,9 +69,8 @@ function App() {
         <Routes>
           {currentUser ? (
             <>
-              {/* Κύριες Διαδρομές Εφαρμογής */}
               <Route path="/" element={<Layout />}>
-                <Route index element={<Navigate to="/dashboard" replace />} /> {/* Redirect από / σε /dashboard */}
+                <Route index element={<Navigate to="/dashboard" replace />} />
                 <Route path="dashboard" element={<DashboardPage />} />
                 <Route path="candidate/:candidateId" element={<CandidateDetailPage />} />
                 <Route path="accepted" element={<CandidateListPage status="Accepted" />} />
@@ -87,24 +84,22 @@ function App() {
                 <Route path="needs-review" element={<CandidateListPage status="NeedsReview" />} />
                 <Route path="processing" element={<CandidateListPage status="Processing" />} />
                 <Route path="settings" element={<SettingsPage />} />
-                {/* Μην βάζεις το NotFoundPage εδώ μέσα αν το Layout έχει δικό του χειρισμό ή αν το θες εκτός */}
+                {/* --- ΝΕΟ ROUTE ΓΙΑ COMPANY ADMIN --- */}
+                {currentUser.role === 'company_admin' && (
+                  <Route path="company/users" element={<CompanyUsersPage />} />
+                )}
+                {/* --------------------------------- */}
               </Route>
 
-              {/* --- ADMIN ΔΙΑΔΡΟΜΕΣ --- */}
-              {/* Ο AdminLayout θα ελέγξει αν ο χρήστης είναι superadmin */}
-              <Route path="/admin" element={<AdminLayout />}>
-                {/* Default admin page, e.g., redirect to companies or a specific admin dashboard */}
-                <Route index element={<Navigate to="companies" replace />} /> 
-                <Route path="companies" element={<AdminCompaniesPage />} />
-                <Route path="users" element={<AdminUsersPage />} />
-                {/* Πρόσθεσε κι άλλες admin υπο-διαδρομές εδώ αργότερα */}
-              </Route>
-              {/* -------------------- */}
+              {currentUser.role === 'superadmin' && ( // Εμφάνιση admin routes μόνο αν είναι superadmin
+                <Route path="/admin" element={<AdminLayout />}>
+                  <Route index element={<Navigate to="companies" replace />} />
+                  <Route path="companies" element={<AdminCompaniesPage />} />
+                  <Route path="users" element={<AdminUsersPage />} />
+                </Route>
+              )}
               
-              {/* Το NotFoundPage καλύτερα να είναι εκτός των layouts για να πιάνει όλες τις άγνωστες διαδρομές */}
-              <Route path="*" element={<Layout><NotFoundPage /></Layout>} /> 
-              {/* Ή απλώς <Route path="*" element={<NotFoundPage />} /> αν δεν θες το Layout στο NotFound */}
-
+              <Route path="*" element={<Layout><NotFoundPage /></Layout>} />
             </>
           ) : (
             <>

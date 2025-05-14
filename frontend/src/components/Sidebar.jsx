@@ -1,10 +1,11 @@
 // frontend/src/components/Sidebar.jsx
 import React from 'react';
 import { NavLink } from 'react-router-dom';
-import { useAuth } from '../App';
+import { useAuth } from '../App'; // Βεβαιώσου ότι το import είναι σωστό
 import './Sidebar.css';
 
 const candidateStatuses = [
+  // ... (παραμένει ίδιο) ...
   { name: 'Needs Review', path: '/dashboard', statusParam: 'NeedsReview', exact: true },
   { name: 'Accepted', path: '/accepted', statusParam: 'Accepted' },
   { name: 'Interested', path: '/interested', statusParam: 'Interested' },
@@ -17,7 +18,7 @@ const candidateStatuses = [
 ];
 
 function Sidebar() {
-  const { logout } = useAuth();
+  const { currentUser, logout } = useAuth(); // Πάρε και το currentUser
 
   const handleLogout = async () => {
     console.log("Logout button clicked");
@@ -26,58 +27,42 @@ function Sidebar() {
 
   return (
     <div className="sidebar">
-      {/* --- LOGO ADDED HERE --- */}
       <div className="sidebar-logo-container">
         <img src="/nexona_logo.png" alt="NEXONA Logo" className="sidebar-logo" />
-        {/* Or use /logo.png if you named it that */}
       </div>
-      {/* --- END LOGO --- */}
 
       <nav>
         <ul>
-          {/* Dashboard Link (Needs Review) */}
-          <li>
-            <NavLink
-              to="/dashboard"
-              className={({ isActive }) => isActive ? 'active-link' : ''}
-              end
-            >
-              Needs Review
-            </NavLink>
-          </li>
-
-          {/* Other Candidate Status Links */}
+          {/* Candidate Status Links (παραμένουν ίδια) */}
+          <li><NavLink to="/dashboard" className={({ isActive }) => isActive ? 'active-link' : ''} end>Needs Review</NavLink></li>
           {candidateStatuses.filter(s => s.name !== 'Needs Review').map((status) => (
-            <li key={status.statusParam}>
-              <NavLink
-                to={status.path}
-                className={({ isActive }) => isActive ? 'active-link' : ''}
-              >
-                {status.name}
-              </NavLink>
-            </li>
+            <li key={status.statusParam}><NavLink to={status.path} className={({ isActive }) => isActive ? 'active-link' : ''}>{status.name}</NavLink></li>
           ))}
-
-          {/* Separator */}
+          
           <li className="separator"><hr /></li>
 
-           {/* Settings Link */}
-           <li>
-             <NavLink
-                 to="/settings"
-                 className={({ isActive }) => isActive ? 'active-link' : ''}
-             >
-                 Settings
-             </NavLink>
-           </li>
+          {/* --- Links βάσει Ρόλου --- */}
+          {currentUser && currentUser.role === 'superadmin' && (
+            <>
+              <li><NavLink to="/admin/companies" className={({ isActive }) => isActive ? 'active-link' : ''}>Manage Companies</NavLink></li>
+              <li><NavLink to="/admin/users" className={({ isActive }) => isActive ? 'active-link' : ''}>Manage All Users</NavLink></li>
+              <li className="separator"><hr /></li>
+            </>
+          )}
+
+          {currentUser && currentUser.role === 'company_admin' && (
+            <>
+              <li><NavLink to="/company/users" className={({ isActive }) => isActive ? 'active-link' : ''}>Manage My Users</NavLink></li>
+              {/* Εδώ μπορείς να προσθέσεις link για Company Settings αν θέλεις */}
+              {/* <li><NavLink to="/company/settings" className={({ isActive }) => isActive ? 'active-link' : ''}>My Company Settings</NavLink></li> */}
+              <li className="separator"><hr /></li>
+            </>
+          )}
+          {/* --- Τέλος Links βάσει Ρόλου --- */}
 
 
-          {/* Logout Button */}
-          <li>
-            <button onClick={handleLogout} className="logout-button">
-              Logout
-            </button>
-          </li>
+          <li><NavLink to="/settings" className={({ isActive }) => isActive ? 'active-link' : ''}>My Settings</NavLink></li>
+          <li><button onClick={handleLogout} className="logout-button">Logout</button></li>
         </ul>
       </nav>
     </div>
