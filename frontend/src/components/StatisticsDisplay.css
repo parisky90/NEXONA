@@ -1,32 +1,48 @@
 /* frontend/src/components/StatisticsDisplay.css */
-.statistics-container .stat-item {
-  background-color: var(--sidebar-bg); /* Χρησιμοποιεί τις μεταβλητές σου */
+/* Αυτά τα στυλ θα μπορούσαν να είναι και στο DashboardPage.css αν προτιμάτε */
+
+.statistics-text-items { /* Η εξωτερική div που περιέχει τα stat items */
+  /* display: grid; (μεταφέρθηκε inline για ευελιξία) */
+  /* gridTemplateColumns: repeat(auto-fit, minmax(180px, 1fr)); */
+  /* gap: 1rem; */
+}
+
+.stat-item {
+  background-color: #f8f9fa; /* Ελαφρύ background για κάθε item */
   padding: 1rem;
   border-radius: 6px;
   text-align: center;
-  border: 1px solid var(--border-color);
-  box-shadow: var(--box-shadow-sm); /* Πρόσθεσα ένα μικρό shadow */
-}
-.statistics-container .stat-item h4 {
-  margin-top: 0;
-  margin-bottom: 0.5rem;
-  font-size: 0.9rem;
-  color: var(--text-medium-gray);
-  text-transform: uppercase;
-  font-weight: 600; /* Λίγο πιο έντονο */
-}
-.statistics-container .stat-item p {
-  margin-bottom: 0.25rem;
-  color: var(--text-dark-gray); /* Πιο σκούρο χρώμα για τον αριθμό */
-}
-.statistics-container .stat-item small {
-  font-size: 0.75rem;
-  color: var(--text-light-gray);
+  border: 1px solid #e9ecef;
+  /* box-shadow: 0 1px 2px rgba(0,0,0,0.03); */ /* Προαιρετική σκιά */
 }
 
-/* Για το loading/error placeholder μέσα στο statistics container αν χρειαστεί */
-.statistics-container .loading-placeholder,
-.statistics-container .error-message {
-    padding: 1rem;
-    text-align: center;
+.stat-item h4 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  font-size: 0.8rem; /* Λίγο μικρότερο */
+  color: #6c757d; /* text-medium-gray */
+  text-transform: uppercase;
+  font-weight: 600;
 }
+
+.stat-item .stat-value { /* Κλάση για τον αριθμό/τιμή */
+  font-size: 1.75rem; /* Μεγαλύτερη τιμή */
+  font-weight: bold;
+  color: #343a40; /* text-dark-gray */
+  margin-bottom: 0.25rem;
+  line-height: 1.2;
+}
+
+.stat-item small {
+  font-size: 0.75rem;
+  color: #868e96; /* text-light-gray */
+}
+
+.stat-item-placeholder h4, .stat-item-placeholder p {
+    background-color: #e9ecef;
+    color: #e9ecef;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+}
+.stat-item-placeholder h4 { height: 1em; width: 70%; margin-left: auto; margin-right: auto;}
+.stat-item-placeholder p { height: 1.5em; width: 40%; margin-left: auto; margin-right: auto;}

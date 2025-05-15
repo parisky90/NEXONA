@@ -1,39 +1,36 @@
 /* frontend/src/components/UploadComponent.css */
-/* v2 - Title Styling */
 
 .upload-container {
-  /* Assuming this uses .card-style from App.css or has similar padding/border */
-   margin-bottom: 25px; /* Space below upload section */
-   padding: 1.5rem; /* Example padding if not using card-style */
-   background-color: var(--content-bg);
-   border: 1px solid var(--border-color);
-   border-radius: 0.375rem;
-   box-shadow: var(--box-shadow-sm);
+  /* Δεν χρειάζεται padding/border/shadow αν το γονικό div έχει .card-style */
+  width: 100%; /* Εξασφάλιση ότι πιάνει το πλάτος του γονέα */
 }
 
+/* Ο τίτλος h3 συνήθως ορίζεται από το γονικό component που χρησιμοποιεί το UploadComponent */
+/*
 .upload-container h3 {
-  font-size: 1.3rem; /* Bigger */
-  font-weight: 600;  /* Bold */
-  color: var(--text-black); /* Black text */
+  font-size: 1.3rem; 
+  font-weight: 600;  
+  color: var(--text-primary); 
   margin-top: 0;
-  margin-bottom: 20px;
-  text-align: left; /* Keep left aligned */
-}
+  margin-bottom: 1.5rem; /* 24px */
+/* text-align: left; */
+/* } */
 
 .dropzone {
-  border: 2px dashed var(--border-color);
-  border-radius: 5px;
-  padding: 25px;
+  border: 2px dashed var(--border-color, #ced4da);
+  border-radius: var(--border-radius-md, 8px);
+  padding: 2rem; /* Περισσότερο padding */
   text-align: center;
   cursor: pointer;
-  background-color: var(--sidebar-bg); /* Light gray background */
-  color: var(--text-medium-gray);
-  margin-bottom: 15px;
+  background-color: #f9fafb; /* Πολύ απαλό γκρι */
+  color: var(--text-muted, #6c757d);
+  margin-bottom: 1rem; /* 16px */
   transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .dropzone.active {
-  border-color: var(--primary-color);
+  border-color: var(--primary-color, #007bff);
+  background-color: #e9f7ff; /* Απαλό μπλε όταν είναι active */
 }
 
 .dropzone p {
@@ -42,54 +39,48 @@
 }
 
 .position-input {
-  margin-bottom: 15px;
-  text-align: left; /* Ensure label aligns left */
+  margin-bottom: 1rem; /* 16px */
+  text-align: left; 
 }
 
 .position-input label {
    display: block;
-   margin-bottom: 5px;
+   margin-bottom: 0.375rem; /* 6px */
    font-weight: 500;
    font-size: 0.9rem;
-   color: var(--text-black); /* Black label text */
+   color: var(--text-secondary, #495057); 
 }
 
-.position-input input.input-light-gray { /* Target specific input */
-   width: 100%;
-   box-sizing: border-box;
-   /* Styles for light gray input applied via class */
-}
+/* Το input θα πάρει στυλ από την κλάση .input-light-gray που ορίζεται στο App.css */
+/* .position-input input.input-light-gray { ... } */
 
-.upload-container button.button-navy-blue { /* Target specific button */
-   /* Styles for navy button applied via class */
-   /* Make button slightly smaller if desired */
-   padding: 0.4rem 0.8rem;
-   font-size: 0.9rem;
-   margin-top: 5px; /* Reduce space above button */
-   /* width: auto; /* Uncomment if you DON'T want full width */
-}
+
+/* Τα κουμπιά θα πάρουν στυλ από τις κλάσεις .button-action .button-primary (ή άλλες) που ορίζονται στο App.css */
+/* .upload-container button.button-action { ... } */
+
 
 .upload-container .message {
-  margin-top: 15px;
-  padding: 10px;
-  border-radius: 4px;
+  margin-top: 1rem; /* 16px */
+  padding: 0.75rem 1rem; /* 12px 16px */
+  border-radius: var(--border-radius-sm, 4px);
   font-size: 0.9rem;
-  text-align: left;
+  text-align: left; /* Καλύτερα αριστερά για μηνύματα */
+  border-width: 1px;
+  border-style: solid;
 }
 
-/* Message styles remain the same */
 .upload-container .message.info {
-  background-color: #eef;
-  color: #33a;
-  border: 1px solid #cce;
+  background-color: #e0e7ff; /* Απαλό μπλε-μοβ */
+  color: #3730a3; /* Σκούρο μπλε-μοβ */
+  border-color: #c7d2fe;
 }
 .upload-container .message.success {
-  background-color: var(--sidebar-hover-bg);
-  color: #0f5132;
-  border: 1px solid #badbcc;
+  background-color: #d1fae5; /* Απαλό πράσινο */
+  color: #065f46; /* Σκούρο πράσινο */
+  border-color: #a7f3d0;
 }
 .upload-container .message.error {
-  background-color: #f8d7da;
-  color: #842029;
-  border: 1px solid #f5c2c7;
+  background-color: #fee2e2; /* Απαλό κόκκινο */
+  color: #b91c1c; /* Σκούρο κόκκινο */
+  border-color: #fecaca;
 }

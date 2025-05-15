@@ -1,36 +1,41 @@
 /* frontend/src/components/Sidebar.css */
 .sidebar {
-  width: 250px; 
-  background-color: #ffffff;
+  width: 260px; 
+  background-color: var(--sidebar-bg, #ffffff); /* Χρήση μεταβλητής */
   padding-top: 0;
-  box-shadow: 2px 0 5px rgba(0,0,0,0.05);
+  box-shadow: var(--box-shadow-sm, 0 2px 8px rgba(0,0,0,0.06));
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  border-right: 1px solid #e9ecef;
+  border-right: 1px solid var(--border-color, #e9ecef);
+  height: calc(100vh - 70px); /* Προσαρμογή στο ύψος του header */
+  position: sticky;
+  top: 70px; /* Προσαρμογή στο ύψος του header */
+  z-index: 1010; 
 }
 
 .sidebar-user-info {
-  padding: 15px 20px;
-  border-bottom: 1px solid #e9ecef;
-  margin-bottom: 10px;
+  padding: 1rem 1.25rem; 
+  border-bottom: 1px solid var(--border-color, #e9ecef);
+  margin-bottom: 0.5rem; 
 }
 
 .sidebar-user-info .user-role-display {
   font-weight: 600;
-  color: #343a40;
-  margin-bottom: 3px;
-  font-size: 0.9rem;
+  color: var(--text-primary, #343a40);
+  margin-bottom: 0.25rem; 
+  font-size: 0.95rem;
+  text-transform: capitalize;
 }
 
 .sidebar-user-info .company-name-display {
-  font-size: 0.8rem;
-  color: #6c757d;
+  font-size: 0.85rem;
+  color: var(--text-muted, #6c757d);
 }
 
 .sidebar-nav {
   list-style: none;
-  padding: 0;
+  padding: 0.5rem 0; 
   margin: 0;
   flex-grow: 1;
   overflow-y: auto;
@@ -39,52 +44,55 @@
 .sidebar-link {
   display: flex;
   align-items: center;
-  padding: 10px 20px;
-  color: #495057;
+  padding: 0.75rem 1.25rem; 
+  margin: 0.25rem 0.75rem; 
+  color: var(--text-secondary, #495057);
   text-decoration: none;
-  font-size: 0.875rem;
-  transition: background-color 0.2s ease, color 0.2s ease;
-  border-left: 3px solid transparent;
+  font-size: 0.9rem; 
+  border-radius: var(--border-radius-md, 6px); 
+  transition: background-color 0.2s ease, color 0.2s ease, transform 0.15s ease-out;
 }
 
 .sidebar-link:hover {
-  background-color: #f8f9fa;
-  color: #007bff;
+  background-color: #e9f7ff; /* Απαλό μπλε για hover */
+  color: var(--primary-color, #0056b3);
+  transform: scale(1.03) translateX(4px); 
 }
 
 .sidebar-link.active-link {
-  background-color: #e9ecef;
-  color: #0056b3;
-  font-weight: 500;
-  border-left-color: #007bff;
+  background-color: var(--primary-color, #007bff); 
+  color: var(--text-on-primary-bg, #ffffff);
+  font-weight: 500; 
+}
+.sidebar-link.active-link:hover { 
+   transform: scale(1.03) translateX(4px);
+   background-color: var(--button-primary-hover-bg, #0056b3); /* Σκουρότερο μπλε στο hover του active */
 }
 
-.sidebar-link .sidebar-icon { /* Στόχευση της κλάσης που δώσαμε στα icons */
-  width: 18px;
-  height: 18px;
-  margin-right: 10px;
+.sidebar-link .sidebar-icon {
+  width: 20px; 
+  height: 20px; 
+  margin-right: 0.75rem; 
   flex-shrink: 0;
-  color: #6c757d; 
+  /* Το χρώμα κληρονομείται από το .sidebar-link */
 }
 
-.sidebar-link.active-link .sidebar-icon {
-  color: #0056b3; 
-}
-
-.sidebar-link .icon-hired { 
-    color: #16a34a; 
-}
 .sidebar-link.active-link .icon-hired { 
-    color: #16a34a;
+    /* Το χρώμα κληρονομείται από το .active-link */
+}
+
+.sidebar-link-text {
+  white-space: nowrap; 
 }
 
 .sidebar-section-title {
-  padding: 12px 20px 6px;
-  font-size: 0.7rem;
+  padding: 0.75rem 1.25rem 0.5rem; 
+  font-size: 0.75rem; 
   font-weight: 600;
-  color: #868e96;
+  color: var(--text-muted, #868e96);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  margin-top: 0.5rem; 
 }
 
 .logout-button {
@@ -92,5 +100,5 @@
   border: none;
   text-align: left;
   cursor: pointer;
-  width: 100%;
+  width: calc(100% - 1.5rem); 
 }

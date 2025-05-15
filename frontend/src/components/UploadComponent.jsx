@@ -1,14 +1,14 @@
 // frontend/src/components/UploadComponent.jsx
 import React, { useState, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import apiClient, { uploadCV } from '../api'; // Assuming api.js exports apiClient and helper
-import './UploadComponent.css'; // Make sure styles are imported
+import { uploadCV } from '../api'; // Έχουμε ήδη το uploadCV helper
+import './UploadComponent.css'; 
 
-function UploadComponent({ onUploadSuccess }) { // Added optional prop for refresh
+function UploadComponent({ onUploadSuccess }) {
   const [acceptedFiles, setAcceptedFiles] = useState([]);
   const [positionName, setPositionName] = useState('');
   const [message, setMessage] = useState('');
-  const [messageType, setMessageType] = useState(''); // 'info', 'success', 'error'
+  const [messageType, setMessageType] = useState(''); 
   const [isUploading, setIsUploading] = useState(false);
 
   const onDrop = useCallback(accepted => {
@@ -41,11 +41,13 @@ function UploadComponent({ onUploadSuccess }) { // Added optional prop for refre
         setMessageType('error');
         return;
     }
-    if (!positionName.trim()) {
-         setMessage('Please enter the position name.');
-         setMessageType('error');
-         return;
-     }
+    // Το position name μπορεί να είναι προαιρετικό, ανάλογα με τη λογική σου.
+    // Αν είναι υποχρεωτικό:
+    // if (!positionName.trim()) {
+    //      setMessage('Please enter the position name.');
+    //      setMessageType('error');
+    //      return;
+    //  }
 
     setIsUploading(true);
     setMessage('Uploading...');
@@ -53,36 +55,30 @@ function UploadComponent({ onUploadSuccess }) { // Added optional prop for refre
 
     const formData = new FormData();
     formData.append('cv_file', acceptedFiles[0]);
-    formData.append('position', positionName.trim());
+    if (positionName.trim()) { // Στείλε το position μόνο αν έχει συμπληρωθεί
+        formData.append('position', positionName.trim());
+    }
+
 
     try {
-        const response = await uploadCV(formData); // Use helper from api.js
+        const response = await uploadCV(formData); 
 
         setMessage(`Upload successful! Candidate ID: ${response.data.candidate_id || 'N/A'}. Parsing started.`);
         setMessageType('success');
         setAcceptedFiles([]);
-        setPositionName('');
+        setPositionName(''); // Καθάρισμα και του position name
 
         if (onUploadSuccess) {
           onUploadSuccess();
         }
 
     } catch (error) {
-        console.error("Upload error object:", error);
         let errorMessage = 'Upload failed. Please try again.';
         if (error.response) {
-            console.error("Error response data:", error.response.data);
-            console.error("Error response status:", error.response.status);
-            if (error.response.status === 401) {
-                 errorMessage = 'Upload failed: Please log in again.';
-            } else {
-                 errorMessage = error.response.data?.error || `Upload failed with status ${error.response.status}.`;
-            }
+            errorMessage = error.response.data?.error || `Upload failed with status ${error.response.status}.`;
         } else if (error.request) {
-            console.error("Error request data:", error.request);
-            errorMessage = 'Upload failed: No response from server. Is the backend running?';
+            errorMessage = 'Upload failed: No response from server.';
         } else {
-            console.error('Error message:', error.message);
             errorMessage = `Upload failed: ${error.message}`;
         }
         setMessage(errorMessage);
@@ -93,14 +89,18 @@ function UploadComponent({ onUploadSuccess }) { // Added optional prop for refre
   };
 
   const selectedFile = acceptedFiles.length > 0 ? (
-    <p style={{ fontSize: '0.85rem', marginTop: '10px', textAlign: 'left' }}>
-        Selected: {acceptedFiles[0].name}
+    <p style={{ fontSize: '0.85rem', marginTop: '10px', textAlign: 'left', color: 'var(--text-secondary)' }}>
+        Selected: <strong>{acceptedFiles[0].name}</strong>
     </p>
   ) : null;
 
   return (
-    <div className="upload-container card-style">
-      <h3>Upload New CV</h3>
+    // Το .upload-container ΔΕΝ χρειάζεται card-style αν το γονικό του (π.χ. στο DashboardPage) έχει ήδη card-style.
+    // Αν το UploadComponent χρησιμοποιείται και αυτόνομα, τότε μπορεί να χρειάζεται.
+    // Ας υποθέσουμε ότι το γονικό έχει card-style.
+    <div className="upload-container"> 
+      {/* Ο τίτλος h3 μπορεί να προέρχεται από το γονικό component (DashboardPage) */}
+      {/* <h3>Upload New CV</h3>  */}
       <div {...getRootProps()} className={`dropzone ${isDragActive ? 'active' : ''}`}>
         <input {...getInputProps()} />
         {isDragActive ? (
@@ -110,31 +110,32 @@ function UploadComponent({ onUploadSuccess }) { // Added optional prop for refre
         )}
       </div>
       {selectedFile}
-      {/* --- Input section --- */}
-      <div className="position-input">
-        <label htmlFor="position">Position Applied For:</label>
+      
+      <div className="position-input"> {/* Αυτό το div θα πάρει στυλ από το UploadComponent.css */}
+        <label htmlFor="position-applied-for">Position Applied For (Optional):</label>
         <input
           type="text"
-          id="position"
-          className="input-light-gray" // Ensure class is applied
+          id="position-applied-for"
+          className="input-light-gray" // Χρήση της global κλάσης για inputs
           value={positionName}
           onChange={handlePositionChange}
-          placeholder="e.g., Software Engineer" // Ensure quotes are closed
+          placeholder="e.g., Software Engineer"
           disabled={isUploading}
-        /> {/* Ensure self-closing tag is correct */}
+        />
       </div>
-      {/* --- Button section --- */}
+      
       <button
         onClick={handleUpload}
-        className="button-navy-blue" // Ensure class is applied
+        className="button-action button-primary" // Χρήση global κλάσεων για κουμπιά
         disabled={isUploading || acceptedFiles.length === 0}
-      > {/* Closing bracket for button start tag */}
+        style={{width: '100%', marginTop: '0.5rem'}} // Πλήρες πλάτος και λίγο κενό
+      >
         {isUploading ? 'Uploading...' : 'Upload CV'}
-      </button> {/* Closing button tag */}
-      {/* --- Message section --- */}
+      </button>
+      
       {message && <p className={`message ${messageType}`}>{message}</p>}
-    </div> // Closing upload-container div
-  ); // Closing return statement
-} // Closing Function Component
+    </div>
+  );
+}
 
 export default UploadComponent;

@@ -1,26 +1,56 @@
 /* frontend/src/components/SearchBar.css */
-/* v2 - Flex layout for width */
-
 .search-bar-container {
-  display: flex; /* Use flexbox for layout */
-  align-items: center; /* Align input and button vertically */
-  gap: 10px; /* Space between input and button */
-  width: 100%; /* Allow container to take available width */
-  margin-bottom: 20px; /* Space below search bar */
-  /* max-width: 700px; */ /* Optional: Limit max width if desired */
+  display: flex;
+  align-items: center;
+  width: 100%; /* Να πιάνει όλο το διαθέσιμο πλάτος του γονέα του */
+  margin-bottom: 1.5rem; /* 24px, κενό από κάτω */
+  gap: 0.75rem; /* 12px, κενό μεταξύ input και button */
 }
 
 .search-input {
-  flex-grow: 1; /* Allow input to take up most available space */
-  /* Base styles are inherited from App.css inputs */
-  /* Add specific input overrides here if needed, e.g.: */
-  /* height: 38px; /* Ensure consistent height */
-  min-width: 200px; /* Prevent input from becoming too small */
+  flex-grow: 1; /* Το input παίρνει τον περισσότερο χώρο */
+  padding: 0.625rem 1rem; /* 10px 16px, λίγο μεγαλύτερο padding */
+  font-size: 1rem; /* 16px */
+  border: 1px solid var(--border-color, #ced4da); /* Χρήση μεταβλητής με fallback */
+  border-radius: var(--border-radius-md, 8px); /* Στρογγυλεμένες γωνίες */
+  line-height: 1.5;
+  background-color: var(--content-bg, #ffffff); /* Λευκό φόντο */
+  color: var(--text-primary, #212529);
+  transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+  min-width: 200px; /* Ελάχιστο πλάτος */
+}
+
+.search-input::placeholder {
+  color: var(--text-muted, #6c757d);
+  opacity: 1;
+}
+
+.search-input:focus {
+  border-color: var(--primary-color, #007bff);
+  outline: 0;
+  box-shadow: 0 0 0 0.25rem rgba(0, 123, 255, 0.25); /* Χρώμα focus */
 }
 
 .search-button {
-  flex-shrink: 0; /* Prevent button from shrinking */
-  /* Base styles (.button-action) and specific styles (.button-cancel-schedule) */
-  /* are applied via className prop in the component using SearchBar */
-  /* Add specific button overrides here ONLY if absolutely necessary */
+  flex-shrink: 0; /* Να μην συρρικνώνεται το κουμπί */
+  padding: 0.625rem 1.25rem; /* 10px 20px, λίγο πιο φαρδύ */
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--button-primary-text, #ffffff);
+  background-color: var(--primary-color, #007bff);
+  border: 1px solid var(--primary-color, #007bff);
+  border-radius: var(--border-radius-md, 8px);
+  cursor: pointer;
+  transition: background-color 0.15s ease-in-out, border-color 0.15s ease-in-out;
+  line-height: 1.5;
+}
+
+.search-button:hover:not(:disabled) {
+  background-color: var(--button-primary-hover-bg, #0056b3);
+  border-color: var(--button-primary-hover-bg, #0056b3);
+}
+
+.search-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
 }

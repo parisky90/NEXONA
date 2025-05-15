@@ -1,88 +1,71 @@
 // frontend/src/components/StatisticsDisplay.jsx
 import React from 'react';
-// import './StatisticsDisplay.css'; // Βεβαιώσου ότι αυτό το αρχείο CSS υπάρχει αν το χρησιμοποιείς
+// import './StatisticsDisplay.css'; // Αν το CSS είναι global ή στο DashboardPage.css, δεν χρειάζεται εδώ
 
-function StatisticsDisplay({ stats, isLoading, error }) {
-  if (isLoading) {
-    return <div className="loading-placeholder card-style">Loading statistics...</div>;
-  }
+function StatisticsDisplay({ stats, isLoading }) { // Αφαιρέθηκε το error prop, θα το χειρίζεται το DashboardPage
   
-  // Εμφάνιση σφάλματος αν υπάρχει και δεν φορτώνει
-  if (error && !isLoading) {
-    return <div className="error-message card-style">Error loading statistics: {error}</div>;
-  }
-  
-  // Εμφάνιση μηνύματος αν δεν υπάρχουν στατιστικά (και δεν υπάρχει σφάλμα ή φόρτωση)
-  if (!isLoading && !error && (!stats || Object.keys(stats).length === 0)) {
+  // Αν δεν υπάρχουν στατιστικά (αλλά δεν φορτώνει), εμφάνισε σχετικό μήνυμα
+  // Αυτό καλύπτει και την περίπτωση που το stats είναι null/undefined ή κενό object
+  // μετά την αρχική φόρτωση.
+  if (!isLoading && (!stats || Object.keys(stats).length === 0 || 
+      (stats.interview_reach_percentage === undefined && 
+       stats.avg_days_to_interview === undefined && 
+       stats.open_positions_count === undefined))) {
     return (
-      <div className="statistics-container card-style" style={{ marginTop: '2rem' }}>
-        <h3>Key Statistics</h3>
-        <p>No statistics available yet or not applicable for the current filter.</p>
+      <div className="statistics-text-items"> {/* Κλάση για styling αν χρειάζεται */}
+        <p style={{ textAlign: 'center', color: '#666', marginTop: '1rem' }}>
+            No specific statistics to display at the moment.
+        </p>
       </div>
     );
   }
 
-  // Αν το stats είναι null/undefined μετά τους παραπάνω ελέγχους, κάτι πήγε πολύ στραβά.
-  // Αυτό είναι ένα επιπλέον δίχτυ ασφαλείας.
-  if (!stats) {
-    return (
-        <div className="statistics-container card-style" style={{ marginTop: '2rem' }}>
-            <h3>Key Statistics</h3>
-            <p>Statistics data is currently unavailable.</p>
+  // Δεν χρειάζεται το isLoading check εδώ αν το DashboardPage το χειρίζεται πριν το render
+  // Ωστόσο, αν θέλουμε placeholder *μέσα* στο component:
+  if (isLoading) {
+      return (
+        <div className="statistics-text-items">
+            <div className="stat-item-placeholder"><h4>Loading...</h4><p>-</p></div>
+            <div className="stat-item-placeholder"><h4>Loading...</h4><p>-</p></div>
+            <div className="stat-item-placeholder"><h4>Loading...</h4><p>-</p></div>
         </div>
-    );
+      );
   }
+
 
   return (
-    <div className="statistics-container card-style" style={{ marginTop: '2rem' }}>
-      <h3>Key Statistics</h3>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
-        
-        {/* Interview Reach Percentage */}
-        {stats.interview_reach_percentage !== undefined && (
-          <div className="stat-item">
-            <h4>Interview Reach</h4>
-            <p style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>
-              {stats.interview_reach_percentage}%
-            </p>
-            <small>(Of total candidates)</small>
-          </div>
-        )}
+    // Δεν χρειάζεται το statistics-container και το h3 εδώ, θα είναι στο DashboardPage
+    <div className="statistics-text-items" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
+      
+      {stats?.interview_reach_percentage !== undefined && (
+        <div className="stat-item">
+          <h4>Interview Reach</h4>
+          <p className="stat-value">
+            {stats.interview_reach_percentage}%
+          </p>
+          <small>(Of total candidates)</small>
+        </div>
+      )}
 
-        {/* Average Days to Interview */}
-        {stats.avg_days_to_interview !== undefined && (
-          <div className="stat-item">
-            <h4>Avg. Time to Interview</h4>
-            <p style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>
-              {stats.avg_days_to_interview}
-              {stats.avg_days_to_interview !== "N/A" ? " days" : ""}
-            </p>
-            <small>(From submission)</small>
-          </div>
-        )}
+      {stats?.avg_days_to_interview !== undefined && (
+        <div className="stat-item">
+          <h4>Avg. Time to Interview</h4>
+          <p className="stat-value">
+            {stats.avg_days_to_interview}
+            {stats.avg_days_to_interview !== "N/A" ? " days" : ""}
+          </p>
+          <small>(From submission)</small>
+        </div>
+      )}
 
-        {/* Open Positions Count */}
-        {stats.open_positions_count !== undefined && (
-          <div className="stat-item">
-            <h4>Open Positions</h4>
-            <p style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>
-              {stats.open_positions_count}
-            </p>
-          </div>
-        )}
-        
-        {/* Μπορείς να προσθέσεις κι άλλα στατιστικά εδώ με παρόμοιο τρόπο */}
-        {/* π.χ., αν το backend στέλνει 'conversion_rate_offer_to_hire' */}
-        {/* {stats.conversion_rate_offer_to_hire !== undefined && (
-          <div className="stat-item">
-            <h4>Offer to Hire Rate</h4>
-            <p style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>
-              {stats.conversion_rate_offer_to_hire}%
-            </p>
-          </div>
-        )} */}
-
-      </div>
+      {stats?.open_positions_count !== undefined && (
+        <div className="stat-item">
+          <h4>Open Positions</h4>
+          <p className="stat-value">
+            {stats.open_positions_count}
+          </p>
+        </div>
+      )}
     </div>
   );
 }

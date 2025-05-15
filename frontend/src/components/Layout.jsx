@@ -2,15 +2,16 @@
 import React from 'react';
 import { Outlet, Link } from 'react-router-dom';
 import Sidebar from './Sidebar';
-import './Layout.css';
+// ΔΕΝ ΧΡΕΙΑΖΕΤΑΙ IMPORT ΓΙΑ ΕΙΚΟΝΕΣ ΑΠΟ ΤΟΝ PUBLIC ΦΑΚΕΛΟ
+import './Layout.css'; 
 
 function Layout() {
   return (
     <div className="app-container">
       <header className="app-header">
-        <Link to="/dashboard">
-          <img src="/NEXONA_LOGO.png" alt="NEXONA Logo" className="app-logo" />
-          {/* Βεβαιώσου ότι το NEXONA_LOGO.png είναι στο public folder */}
+        <Link to="/dashboard" className="app-logo-link">
+          {/* ΔΙΟΡΘΩΣΗ: Όνομα αρχείου με μικρά γράμματα */}
+          <img src="/nexona_logo.png" alt="NEXONA Logo" className="app-logo" />
         </Link>
       </header>
       <div className="main-layout-container">

@@ -1,68 +1,68 @@
-:root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+/* frontend/src/index.css */
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+/* CSS Reset and Global Styles */
+html {
+  box-sizing: border-box;
+  font-size: 16px; /* Βασικό μέγεθος γραμματοσειράς */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
+*, *::before, *::after {
+  box-sizing: inherit; /* Κληρονομεί το box-sizing από το html */
 }
 
 body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  margin: 0; /* Αφαίρεση default margin */
+  padding: 0; /* Αφαίρεση default padding */
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+  line-height: 1.6;
+  color: #213547; /* Default text color (από το light theme του Vite) */
+  background-color: #f8f9fa; /* Ένα ελαφρύ γκρι για το background όλης της σελίδας */
+  min-height: 100vh; /* Εξασφαλίζει ότι το body πιάνει τουλάχιστον όλο το ύψος */
+  width: 100%;      /* Εξασφαλίζει ότι το body πιάνει όλο το πλάτος */
+  overflow-x: hidden; /* Αποφυγή οριζόντιου scrollbar αν κάτι ξεφεύγει */
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+#root {
+  min-height: 100vh; /* Το root div να πιάνει επίσης όλο το ύψος */
+  width: 100%;      /* Και όλο το πλάτος */
+  display: flex;    /* Για να μπορεί το App component να επεκταθεί σωστά */
+  flex-direction: column; /* Αν το App component έχει εσωτερική δομή */
 }
 
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
+/* Μπορείς να αφαιρέσεις ή να προσαρμόσεις τα παρακάτω αν δεν τα χρειάζεσαι */
+a {
   font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
-  cursor: pointer;
-  transition: border-color 0.25s;
+  color: #007bff; /* Τυπικό χρώμα link */
+  text-decoration: none; /* Αφαίρεση υπογράμμισης by default */
 }
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+a:hover {
+  color: #0056b3;
+  text-decoration: underline;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
-  }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+h1 { /* Βασικό styling για h1 - μπορείς να το αλλάξεις */
+  font-size: 2.5em; /* Παράδειγμα */
+  line-height: 1.1;
+  margin-top: 0; /* Συχνά χρήσιμο */
 }
+
+button { /* Βασικό reset για buttons αν δεν το κάνεις αλλού */
+  font-family: inherit;
+  font-size: 1em;
+  cursor: pointer;
+  /* Μπορείς να αφαιρέσεις τα default styles του Vite για buttons αν έχεις δικά σου παντού */
+  /* border-radius: 8px; */
+  /* border: 1px solid transparent; */
+  /* padding: 0.6em 1.2em; */
+  /* font-weight: 500; */
+  /* background-color: #f9f9f9; */
+  /* transition: border-color 0.25s; */
+}
+/* button:hover { border-color: #646cff; } */
+/* button:focus, button:focus-visible { outline: 4px auto -webkit-focus-ring-color; } */
+
+/* Αφαίρεση των @media (prefers-color-scheme: light) από εδώ, εκτός αν τα θέλεις ρητά */
+/* Τα χρώματα ορίζονται ήδη παραπάνω ή στο App.css */

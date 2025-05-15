@@ -8,27 +8,24 @@ from dateutil import parser as dateutil_parser
 from flask_login import login_user, logout_user, current_user, login_required
 from app import db, celery
 from app.models import User, Candidate, Position, Company, CompanySettings
-from sqlalchemy.orm.attributes import flag_modified  # Αυτό χρησιμοποιείται στο PUT του handle_candidate
-from sqlalchemy import func, case, or_, extract  # <--- ΕΔΩ ΕΙΝΑΙ Η ΔΙΟΡΘΩΣΗ ΜΕ ΤΟ EXTRACT
+from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy import func, case, or_, extract, DECIMAL  # Προσθήκη DECIMAL για το avg_days_to_interview
 from app.services import s3_service
-print("ROUTES.PY LOADED WITH EXTRACT")
 
 bp = Blueprint('api', __name__)
 
 ALLOWED_EXTENSIONS = {'pdf', 'docx'}
 
 
-def allowed_file(filename): return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 def get_current_user_company_id():
     if not current_user.is_authenticated:
         return None
     if current_user.role == 'superadmin':
-        # Superadmin might operate on any company, so they might not have a single company_id context here
-        # Or they might select a company to operate on from the UI.
-        # For now, if routes need a company_id for superadmin, it should be passed as a param.
-        return None  # Or handle specific logic if superadmin needs a default company context
+        return None
     if not current_user.company_id:
         current_app.logger.error(
             f"User {current_user.id} ({current_user.username}) with role {current_user.role} has no company_id.")
@@ -55,13 +52,12 @@ def register():
     if User.query.filter_by(email=email).first():
         return jsonify({"error": "Email address already registered"}), 409
 
-    new_user = User(username=username, email=email, role='user', is_active=False)  # Default role and inactive
+    new_user = User(username=username, email=email, role='user', is_active=False)
     new_user.set_password(password)
     try:
         db.session.add(new_user)
         db.session.commit()
         current_app.logger.info(f"New user registered: {username} ({email}). Awaiting activation/assignment.")
-        # Consider sending a notification email to admin for activation
         return jsonify({
             "message": "Registration successful. Account activation and company assignment pending administrator review."}), 201
     except Exception as e:
@@ -74,7 +70,7 @@ def register():
 def login():
     data = request.get_json()
     if not data: return jsonify({"error": "Invalid JSON format"}), 400
-    login_identifier = data.get('login_identifier')  # Can be username or email
+    login_identifier = data.get('login_identifier')
     password = data.get('password')
     if not login_identifier or not password:
         return jsonify({"error": "Login identifier and password required"}), 400
@@ -83,10 +79,10 @@ def login():
     if user and user.check_password(password):
         if not user.is_active:
             return jsonify({"error": "Account not active. Please check your email or contact an administrator."}), 403
-        if user.role != 'superadmin' and not user.company_id:  # Regular users must be assigned to a company
+        if user.role != 'superadmin' and not user.company_id:
             return jsonify({"error": "Account not yet assigned to a company by an administrator."}), 403
         login_user(user, remember=remember)
-        user_data = user.to_dict(include_company_info=True)  # Fetch company info including settings
+        user_data = user.to_dict(include_company_info=True)
         current_app.logger.info(f"User {user.username} (Role: {user.role}, CompanyID: {user.company_id}) logged in.")
         return jsonify({"message": "Login successful", "user": user_data}), 200
     return jsonify({"error": "Invalid login identifier or password"}), 401
@@ -110,7 +106,6 @@ def check_session():
     return jsonify({"authenticated": False}), 200
 
 
-# --- Upload Route ---
 @bp.route('/upload', methods=['POST'])
 @login_required
 def upload_cv():
@@ -129,7 +124,6 @@ def upload_cv():
     elif user_company_id_for_context:
         target_company_id_for_candidate = user_company_id_for_context
     else:
-        # This case should ideally not be reached if login logic ensures company_id for non-superadmins
         return jsonify({"error": "User not associated with a company or unauthorized."}), 403
 
     if 'cv_file' not in request.files:
@@ -146,55 +140,50 @@ def upload_cv():
     try:
         file_ext = file.filename.rsplit('.', 1)[1].lower()
         original_filename = secure_filename(file.filename)
-        # Ensure S3 key is unique and organized
         s3_key = f"company_{target_company_id_for_candidate}/cvs/{uuid.uuid4()}.{file_ext}"
 
-        file.seek(0)  # Ensure file pointer is at the beginning
+        file.seek(0)
         uploaded_s3_key = s3_service.upload_file(file, s3_key)
         if not uploaded_s3_key:
-            # s3_service.upload_file should raise an exception on failure, but double check
             raise Exception("S3 upload service indicated failure without raising an exception.")
 
-        # Create placeholder candidate
         new_candidate = Candidate(
             cv_original_filename=original_filename,
             cv_storage_path=uploaded_s3_key,
-            current_status='Processing',  # Initial status
-            confirmation_uuid=uuid.uuid4(),  # Generate UUID object directly
+            current_status='Processing',
+            confirmation_uuid=uuid.uuid4(),
             company_id=target_company_id_for_candidate
         )
 
         if position_name_from_form and position_name_from_form.strip():
             pos_name_cleaned = position_name_from_form.strip()
-            # Case-insensitive search for position
             position = Position.query.filter(
                 func.lower(Position.position_name) == func.lower(pos_name_cleaned),
                 Position.company_id == target_company_id_for_candidate
             ).first()
-            if not position:  # Create position if it doesn't exist for the company
-                position = Position(position_name=pos_name_cleaned,  # Use cleaned name, or original if preferred
+            if not position:
+                position = Position(position_name=pos_name_cleaned,
                                     company_id=target_company_id_for_candidate,
-                                    status='Open')  # Default status for new positions
+                                    status='Open')
                 db.session.add(position)
-                # No commit here, will be committed with candidate
             new_candidate.positions.append(position)
 
         db.session.add(new_candidate)
-        db.session.commit()  # Commit placeholder candidate and potentially new position
-        candidate_id_for_task = str(new_candidate.candidate_id)  # Pass ID as string to Celery
+        db.session.commit()
+        candidate_id_for_task = str(new_candidate.candidate_id)
 
         celery.send_task('tasks.parsing.parse_cv_task',
                          args=[candidate_id_for_task, uploaded_s3_key, target_company_id_for_candidate])
         current_app.logger.info(
             f"CV uploaded (S3 Key: {uploaded_s3_key}), Placeholder Candidate ID: {candidate_id_for_task} created for Company {target_company_id_for_candidate}. Parsing task queued.")
-        return jsonify(new_candidate.to_dict()), 201  # Return created candidate
+        return jsonify(new_candidate.to_dict()), 201
 
     except Exception as e:
-        db.session.rollback()  # Rollback any partial DB changes
+        db.session.rollback()
         current_app.logger.error(
             f"Upload Error (User: {current_user.id}, TargetCompany: {target_company_id_for_candidate}): {e}",
             exc_info=True)
-        if uploaded_s3_key:  # If S3 upload succeeded but something else failed, try to delete the S3 object
+        if uploaded_s3_key:
             try:
                 s3_service.delete_file(uploaded_s3_key)
                 current_app.logger.info(f"S3 file {uploaded_s3_key} deleted due to subsequent error.")
@@ -215,25 +204,33 @@ def get_dashboard_summary():
         company_id_filter_param = request.args.get('company_id', type=int)
         if company_id_filter_param:
             query_target_company_id = company_id_filter_param
-        # If superadmin and no company_id_filter_param, summary will be for all companies
     elif user_company_id_context:
         query_target_company_id = user_company_id_context
-    else:  # Should not happen for authenticated non-superadmin if login logic is correct
+    else:
         return jsonify({"error": "User not associated with a company or not authorized."}), 403
 
     try:
-        # Define all statuses you want to count
         relevant_statuses = [
             'New', 'Processing', 'NeedsReview', 'Interview', 'OfferMade', 'Hired',
             'Rejected', 'ParsingFailed', 'Accepted', 'Declined', 'Interested',
             'Evaluation', 'On Hold'
         ]
-        # Create case statements for each status to count them
+
+        # Function to generate keys exactly as seen in your logs
+        def generate_key_from_log_format(status_string):
+            # Based on your logs: 'needsreview', 'offermade', 'parsingfailed'
+            # This implies removing spaces and hyphens, then lowercasing.
+            return status_string.replace(" ", "").replace("-", "").lower()
+
+        status_keys_for_dict = {status: generate_key_from_log_format(status) for status in relevant_statuses}
+
         status_aggregations = [
             func.sum(case((Candidate.current_status == status, 1), else_=0)).label(
-                status.replace(" ", "_").replace("-", "_"))
+                status_keys_for_dict[status]
+            )
             for status in relevant_statuses
         ]
+
         query_obj = db.session.query(func.count(Candidate.candidate_id).label("total_candidates"), *status_aggregations)
 
         if query_target_company_id:
@@ -242,13 +239,14 @@ def get_dashboard_summary():
         q_result = query_obj.first()
 
         summary = {"total_candidates": 0}
-        # Initialize all status counts to 0
         for status in relevant_statuses:
-            summary[status.replace(" ", "_").replace("-", "_")] = 0
+            summary[status_keys_for_dict[status]] = 0
 
         if q_result:
-            summary.update({k: (v or 0) for k, v in q_result._asdict().items()})  # Use _asdict() for Row objects
+            summary.update({k: (v or 0) for k, v in q_result._asdict().items()})
 
+        current_app.logger.info(
+            f"CORRECTED Dashboard Summary for company {query_target_company_id if query_target_company_id else 'ALL'}: {summary}")
         return jsonify(summary), 200
     except Exception as e:
         current_app.logger.error(
@@ -290,30 +288,70 @@ def get_dashboard_statistics():
 
         stats['interview_reach_percentage'] = round(
             (reached_interview_count / total_candidates_for_company) * 100, 1
-        ) if total_candidates_for_company > 0 else 0
+        ) if total_candidates_for_company > 0 else 0.0
 
-        # Calculate average time to interview
-        avg_time_subquery = db.session.query(
+        # avg_days_to_interview might return Decimal, ensure it's serializable
+        avg_time_subquery_result = db.session.query(
             func.avg(
                 extract('epoch', Candidate.interview_datetime) - extract('epoch', Candidate.submission_date)
             ).label('avg_duration_seconds')
         ).filter(
             Candidate.submission_date.isnot(None),
             Candidate.interview_datetime.isnot(None),
-            Candidate.interview_datetime > Candidate.submission_date,  # Ensure interview is after submission
+            Candidate.interview_datetime > Candidate.submission_date,
             Candidate.current_status.in_(['Interview', 'Evaluation', 'OfferMade', 'Hired'])
-            # Consider only relevant candidates
         )
         if query_target_company_id:
-            avg_time_subquery = avg_time_subquery.filter(Candidate.company_id == query_target_company_id)
+            avg_time_subquery_result = avg_time_subquery_result.filter(Candidate.company_id == query_target_company_id)
 
-        avg_result = avg_time_subquery.first()
-        stats['avg_days_to_interview'] = round(
-            avg_result.avg_duration_seconds / (60 * 60 * 24), 1
-        ) if avg_result and avg_result.avg_duration_seconds is not None and avg_result.avg_duration_seconds >= 0 else "N/A"
+        avg_result = avg_time_subquery_result.scalar()  # Use scalar to get single value or None
+
+        if avg_result is not None:  # avg_result could be Decimal
+            stats['avg_days_to_interview'] = round(float(avg_result) / (60 * 60 * 24), 1)
+        else:
+            stats['avg_days_to_interview'] = "N/A"
 
         stats['open_positions_count'] = base_query_position.filter(Position.status == 'Open').count()
 
+        pipeline_status_order = [
+            'NeedsReview', 'Accepted', 'Interested', 'Interview', 'Evaluation', 'OfferMade', 'Hired'
+        ]
+        other_statuses_to_count = ['Processing', 'ParsingFailed', 'New', 'On Hold', 'Rejected', 'Declined']
+        all_statuses_for_query = pipeline_status_order + other_statuses_to_count
+
+        candidates_by_stage_query = db.session.query(
+            Candidate.current_status,
+            func.count(Candidate.candidate_id).label('count')
+        ).filter(Candidate.current_status.in_(all_statuses_for_query))
+
+        if query_target_company_id:
+            candidates_by_stage_query = candidates_by_stage_query.filter(
+                Candidate.company_id == query_target_company_id)
+
+        candidates_by_stage_results = candidates_by_stage_query.group_by(Candidate.current_status).all()
+
+        stats_by_stage_dict = {status: 0 for status in all_statuses_for_query}
+
+        for status_value, count in candidates_by_stage_results:
+            if status_value in stats_by_stage_dict:
+                stats_by_stage_dict[status_value] = count
+
+        stats['candidates_by_stage'] = []
+        for status_val_in_pipeline in pipeline_status_order:
+            stage_name_display = status_val_in_pipeline.replace("NeedsReview", "Needs Review").replace("OfferMade",
+                                                                                                       "Offer Made").replace(
+                "ParsingFailed", "Parsing Failed")
+
+            stats['candidates_by_stage'].append({
+                "stage_name": stage_name_display,
+                "stage_value": status_val_in_pipeline,
+                "count": stats_by_stage_dict.get(status_val_in_pipeline, 0)
+            })
+        current_app.logger.info(
+            f"Generated candidates_by_stage for chart (Company {query_target_company_id if query_target_company_id else 'ALL'}): {stats['candidates_by_stage']}")
+
+        current_app.logger.info(
+            f"Returning statistics for company {query_target_company_id if query_target_company_id else 'ALL'}: {stats}")
         return jsonify(stats), 200
     except Exception as e:
         current_app.logger.error(
@@ -322,7 +360,8 @@ def get_dashboard_statistics():
         return jsonify({"error": "Failed to retrieve dashboard statistics."}), 500
 
 
-# --- Candidate List Route ---
+# ... (Ο υπόλοιπος κώδικας για /candidates, /candidate/<id>, /search, /settings, /interviews παραμένει ο ίδιος με πριν)
+
 @bp.route('/candidates/<string:status_param>', methods=['GET'])
 @login_required
 def get_candidates_by_status(status_param):
@@ -356,7 +395,6 @@ def get_candidates_by_status(status_param):
         if status_param != 'All':
             query_obj = query_obj.filter(Candidate.current_status == status_param)
 
-        # Order by submission_date descending, with nulls last (e.g., for placeholders not yet parsed)
         pagination = query_obj.order_by(Candidate.submission_date.desc().nullslast()).paginate(
             page=page, per_page=per_page, error_out=False
         )
@@ -380,12 +418,11 @@ def get_candidates_by_status(status_param):
         return jsonify({"error": "Failed to retrieve candidate list."}), 500
 
 
-# --- Candidate Detail, Update, Delete ---
 @bp.route('/candidate/<string:candidate_id_url>', methods=['GET', 'PUT', 'DELETE'])
 @login_required
 def handle_candidate(candidate_id_url):
     try:
-        candidate_uuid = uuid.UUID(candidate_id_url)  # Validate UUID format
+        candidate_uuid = uuid.UUID(candidate_id_url)
     except ValueError:
         return jsonify({"error": "Invalid candidate ID format."}), 400
 
@@ -395,7 +432,6 @@ def handle_candidate(candidate_id_url):
     user_id_for_logs = current_user.id
     user_username_for_logs = current_user.username
 
-    # Authorization check
     if current_user.role != 'superadmin':
         if not user_company_id_context or candidate.company_id != user_company_id_context:
             current_app.logger.warning(
@@ -406,7 +442,7 @@ def handle_candidate(candidate_id_url):
         try:
             cv_url_val = None
             if candidate.cv_storage_path:
-                cv_url_val = s3_service.generate_presigned_url(candidate.cv_storage_path, expiration=900)  # 15 minutes
+                cv_url_val = s3_service.generate_presigned_url(candidate.cv_storage_path, expiration=900)
             return jsonify(candidate.to_dict(include_cv_url=True, cv_url=cv_url_val)), 200
         except Exception as e:
             current_app.logger.error(f"GET Candidate {candidate.candidate_id} Error: {e}", exc_info=True)
@@ -421,7 +457,7 @@ def handle_candidate(candidate_id_url):
 
         updated_fields_tracker = False
         original_status = candidate.current_status
-        original_interview_time = candidate.interview_datetime  # Store before any changes
+        original_interview_time = candidate.interview_datetime
         interview_time_changed_flag = False
 
         allowed_direct_updates = [
@@ -429,7 +465,7 @@ def handle_candidate(candidate_id_url):
             'education_summary', 'experience_summary', 'skills_summary',
             'languages', 'seminars', 'notes', 'evaluation_rating',
             'interview_location', 'interview_type',
-            'hr_comments'  # Added hr_comments
+            'hr_comments'
         ]
 
         for key, value_from_payload in data.items():
@@ -443,28 +479,27 @@ def handle_candidate(candidate_id_url):
                     else:
                         try:
                             new_value = int(value_from_payload)
-                            if not (0 <= new_value <= 120):  # Basic age validation
-                                new_value = None  # Or keep old, or raise error
+                            if not (0 <= new_value <= 120):
+                                new_value = None
                                 current_app.logger.warning(f"Invalid age value: {value_from_payload}. Set to None.")
                         except ValueError:
                             current_app.logger.warning(
                                 f"Invalid value for age: {value_from_payload}. Skipping update for age.")
-                            continue  # Skip this field update
+                            continue
 
                 if key == 'email' and value_from_payload:
                     new_value = value_from_payload.lower().strip()
-                    if new_value != candidate.email:  # Check only if email is actually changing
-                        # Check for uniqueness constraint (email, company_id)
+                    if new_value != candidate.email:
                         existing_with_new_email = Candidate.query.filter(
                             Candidate.email == new_value,
                             Candidate.company_id == candidate.company_id,
-                            Candidate.candidate_id != candidate.candidate_id  # Exclude self
+                            Candidate.candidate_id != candidate.candidate_id
                         ).first()
                         if existing_with_new_email:
                             current_app.logger.warning(
                                 f"Attempt to update email for candidate {candidate.candidate_id} to '{new_value}', which already exists for company {candidate.company_id}.")
                             return jsonify({
-                                               "error": f"Email '{new_value}' is already in use by another candidate in this company."}), 409
+                                "error": f"Email '{new_value}' is already in use by another candidate in this company."}), 409
 
                 if current_value_on_candidate != new_value:
                     setattr(candidate, key, new_value)
@@ -474,22 +509,19 @@ def handle_candidate(candidate_id_url):
 
             elif key == 'interview_datetime':
                 new_dt_value_utc = None
-                if value_from_payload:  # If a value is provided (could be null or empty string from frontend)
+                if value_from_payload:
                     try:
-                        # Attempt to parse ISO format string
                         parsed_dt = dateutil_parser.isoparse(value_from_payload)
-                        # Ensure it's timezone-aware and in UTC
                         new_dt_value_utc = parsed_dt.astimezone(
                             dt_timezone.utc) if parsed_dt.tzinfo else parsed_dt.replace(tzinfo=dt_timezone.utc)
                     except (ValueError, TypeError) as date_parse_err:
                         current_app.logger.warning(
                             f"Invalid date format for interview_datetime ('{value_from_payload}'). Error: {date_parse_err}. Skipping update.")
-                        continue  # Skip this field update
+                        continue
 
-                # Check if the new datetime is actually different from the old one
                 if (original_interview_time and new_dt_value_utc != original_interview_time) or \
                         (not original_interview_time and new_dt_value_utc is not None) or \
-                        (original_interview_time and new_dt_value_utc is None):  # Handles setting to null
+                        (original_interview_time and new_dt_value_utc is None):
                     candidate.interview_datetime = new_dt_value_utc
                     interview_time_changed_flag = True
                     updated_fields_tracker = True
@@ -501,7 +533,6 @@ def handle_candidate(candidate_id_url):
                 target_pos_names_from_payload_lower = {p_name.strip().lower() for p_name in value_from_payload if
                                                        isinstance(p_name, str) and p_name.strip()}
 
-                # Positions to remove
                 positions_to_disassociate_objs = [p for p in candidate.positions if
                                                   p.position_name.lower().strip() not in target_pos_names_from_payload_lower]
                 if positions_to_disassociate_objs:
@@ -511,10 +542,8 @@ def handle_candidate(candidate_id_url):
                     current_app.logger.debug(
                         f"Candidate {candidate.candidate_id}: Disassociated positions: {[p.position_name for p in positions_to_disassociate_objs]}")
 
-                # Positions to add
                 for pos_name_target_lower in target_pos_names_from_payload_lower:
                     if pos_name_target_lower not in current_candidate_pos_names_lower:
-                        # Find original case name from payload for creating new position
                         original_case_pos_name = next((p_name_orig for p_name_orig in value_from_payload if
                                                        p_name_orig.strip().lower() == pos_name_target_lower),
                                                       pos_name_target_lower.title())
@@ -523,22 +552,20 @@ def handle_candidate(candidate_id_url):
                             func.lower(Position.position_name) == pos_name_target_lower,
                             Position.company_id == candidate.company_id
                         ).first()
-                        if not position_obj_to_add:  # Create if not exists for this company
+                        if not position_obj_to_add:
                             position_obj_to_add = Position(position_name=original_case_pos_name,
                                                            company_id=candidate.company_id, status='Open')
-                            db.session.add(position_obj_to_add)  # Add to session for commit
+                            db.session.add(position_obj_to_add)
                             current_app.logger.debug(
                                 f"Candidate {candidate.candidate_id}: Created new position '{original_case_pos_name}' during update.")
 
-                        if position_obj_to_add not in candidate.positions:  # Check if already in the list before appending
+                        if position_obj_to_add not in candidate.positions:
                             candidate.positions.append(position_obj_to_add)
                             updated_fields_tracker = True
                             current_app.logger.debug(
                                 f"Candidate {candidate.candidate_id}: Associated with position '{position_obj_to_add.position_name}'")
-                # No need for flag_modified(candidate, "positions") if using db.relationship with backref and appends/removes
 
             elif key == 'offers' and isinstance(value_from_payload, list):
-                # Basic sanitization for offers
                 sanitized_offers = []
                 for offer_data in value_from_payload:
                     if isinstance(offer_data, dict):
@@ -553,27 +580,21 @@ def handle_candidate(candidate_id_url):
 
                         if 'offer_date' in offer_data and offer_data['offer_date']:
                             try:
-                                # Ensure date is valid ISO format, or set to now
                                 dateutil_parser.isoparse(offer_data['offer_date'])
                                 clean_offer['offer_date'] = offer_data['offer_date']
                             except:
                                 clean_offer['offer_date'] = datetime.now(dt_timezone.utc).isoformat()
                         else:
                             clean_offer['offer_date'] = datetime.now(dt_timezone.utc).isoformat()
-                        clean_offer['offer_notes'] = offer_data.get('offer_notes', '')  # Ensure notes is a string
+                        clean_offer['offer_notes'] = offer_data.get('offer_notes', '')
                         sanitized_offers.append(clean_offer)
 
-                # Compare sanitized offers with existing offers
-                # This comparison might be tricky if order matters or if objects are complex.
-                # For simple list of dicts, direct comparison might work if order is consistent.
-                # A more robust way is to compare sets of frozensets of items if order doesn't matter.
-                if candidate.offers != sanitized_offers:  # Simple comparison, might need improvement
+                if candidate.offers != sanitized_offers:
                     candidate.offers = sanitized_offers
-                    flag_modified(candidate, "offers")  # Mark as modified for JSONB
+                    flag_modified(candidate, "offers")
                     updated_fields_tracker = True
                     current_app.logger.debug(f"Candidate {candidate.candidate_id}: Offers updated.")
 
-        # Handle status change separately as it might trigger other logic
         new_status_from_payload = data.get('current_status', original_status)
         status_changed_flag = False
         if new_status_from_payload != original_status:
@@ -585,64 +606,56 @@ def handle_candidate(candidate_id_url):
                 description=f"Status changed from '{original_status}' to '{new_status_from_payload}'.",
                 actor_id=user_id_for_logs,
                 actor_username=user_username_for_logs,
-                details={  # Only include relevant, non-sensitive details
+                details={
                     "previous_status": original_status,
                     "new_status": new_status_from_payload,
-                    # "notes": data.get('notes', candidate.notes) # ΑΦΑΙΡΕΘΗΚΕ ΑΠΟ ΕΔΩ
                 }
             )
             current_app.logger.debug(
                 f"Candidate {candidate.candidate_id}: Status changed from '{original_status}' to '{new_status_from_payload}' by {user_username_for_logs}")
 
-            # Reset interview-related fields if status moves away from interview stages
             if original_status in ['Interview', 'Evaluation'] and new_status_from_payload not in ['Interview',
                                                                                                   'Evaluation',
                                                                                                   'OfferMade', 'Hired']:
                 candidate.interview_datetime = None
                 candidate.interview_location = None
                 candidate.interview_type = None
-                candidate.candidate_confirmation_status = None  # Reset confirmation
+                candidate.candidate_confirmation_status = None
 
-            # Reset fields if moving back to NeedsReview from a final stage
             if new_status_from_payload == 'NeedsReview' and original_status in ['Rejected', 'Declined', 'Hired',
                                                                                 'ParsingFailed']:
                 candidate.candidate_confirmation_status = None
-                if 'evaluation_rating' not in data: candidate.evaluation_rating = None  # Clear if not explicitly sent
-                if 'offers' not in data: candidate.offers = []; flag_modified(candidate,
-                                                                              "offers")  # Clear if not explicitly sent
+                if 'evaluation_rating' not in data: candidate.evaluation_rating = None
+                if 'offers' not in data: candidate.offers = []; flag_modified(candidate, "offers")
 
-        # Handle candidate confirmation status logic based on interview scheduling/status change
         if interview_time_changed_flag or (status_changed_flag and candidate.current_status == 'Interview'):
-            if candidate.interview_datetime:  # If an interview is scheduled (or re-scheduled)
-                # Set to Pending only if it's not already Pending or if UUID needs refresh.
-                # A new UUID is good practice for a new/changed invitation.
+            if candidate.interview_datetime:
                 candidate.candidate_confirmation_status = 'Pending'
-                candidate.confirmation_uuid = uuid.uuid4()  # Always assign a new UUID for a new/changed interview
+                candidate.confirmation_uuid = uuid.uuid4()
                 current_app.logger.info(
                     f"Candidate {candidate.candidate_id}: Interview (re)scheduled. Confirmation status set to Pending with new UUID {candidate.confirmation_uuid}.")
-            else:  # If interview_datetime is cleared
+            else:
                 if candidate.candidate_confirmation_status is not None:
                     candidate.candidate_confirmation_status = None
                     current_app.logger.info(
                         f"Candidate {candidate.candidate_id}: Interview cleared. Confirmation status reset.")
 
-        if not updated_fields_tracker:  # No changes were made
+        if not updated_fields_tracker:
             cv_url_val_no_change = s3_service.generate_presigned_url(candidate.cv_storage_path,
                                                                      expiration=900) if candidate.cv_storage_path else None
             return jsonify(candidate.to_dict(include_cv_url=True,
-                                             cv_url=cv_url_val_no_change)), 200  # Return 200 OK with current data
+                                             cv_url=cv_url_val_no_change)), 200
 
         try:
-            candidate.updated_at = datetime.now(dt_timezone.utc)  # Update timestamp
+            candidate.updated_at = datetime.now(dt_timezone.utc)
             db.session.commit()
             current_app.logger.info(
                 f"Candidate {candidate.candidate_id} updated successfully by {user_id_for_logs} ({user_username_for_logs}).")
 
-            # Trigger emails based on status changes or interview scheduling
             should_send_invitation = (
-                                                 interview_time_changed_flag and candidate.interview_datetime and candidate.current_status == 'Interview') or \
+                                             interview_time_changed_flag and candidate.interview_datetime and candidate.current_status == 'Interview') or \
                                      (
-                                                 status_changed_flag and candidate.current_status == 'Interview' and candidate.interview_datetime and candidate.candidate_confirmation_status == 'Pending')
+                                             status_changed_flag and candidate.current_status == 'Interview' and candidate.interview_datetime and candidate.candidate_confirmation_status == 'Pending')
 
             if should_send_invitation:
                 try:
@@ -674,8 +687,8 @@ def handle_candidate(candidate_id_url):
         current_app.logger.info(
             f"DELETE Candidate {candidate.candidate_id} attempt by User {user_id_for_logs} ({user_username_for_logs})")
         s3_key_to_delete = candidate.cv_storage_path
-        candidate_name_log = candidate.get_full_name()  # Get name before deleting
-        cand_id_log = str(candidate.candidate_id)  # Get ID before deleting
+        candidate_name_log = candidate.get_full_name()
+        cand_id_log = str(candidate.candidate_id)
 
         try:
             db.session.delete(candidate)
@@ -698,7 +711,6 @@ def handle_candidate(candidate_id_url):
     return jsonify({"error": "Method not supported for this endpoint."}), 405
 
 
-# --- CV URL, Search, Settings, Interview Confirm/Decline Routes ---
 @bp.route('/candidate/<string:candidate_id_url>/cv_url', methods=['GET'])
 @login_required
 def get_candidate_cv_url(candidate_id_url):
@@ -718,11 +730,10 @@ def get_candidate_cv_url(candidate_id_url):
         return jsonify({"error": "No CV file associated with this candidate."}), 404
 
     try:
-        cv_url = s3_service.generate_presigned_url(candidate.cv_storage_path, expiration=900)  # 15 minutes
+        cv_url = s3_service.generate_presigned_url(candidate.cv_storage_path, expiration=900)
         if cv_url:
             return jsonify({"cv_url": cv_url, "original_filename": candidate.cv_original_filename}), 200
         else:
-            # This case should ideally be handled by an exception in generate_presigned_url
             current_app.logger.error(
                 f"S3 service failed to generate presigned URL for candidate {candidate.candidate_id}, S3 key {candidate.cv_storage_path}")
             return jsonify({"error": "Could not generate CV URL due to S3 service issue."}), 500
@@ -758,7 +769,6 @@ def search_candidates():
 
         if query_term:
             search_pattern = f"%{query_term}%"
-            # Conditions for searching in candidate fields
             conditions = [
                 Candidate.first_name.ilike(search_pattern),
                 Candidate.last_name.ilike(search_pattern),
@@ -768,9 +778,8 @@ def search_candidates():
                 Candidate.education_summary.ilike(search_pattern),
                 Candidate.experience_summary.ilike(search_pattern),
                 Candidate.notes.ilike(search_pattern),
-                Candidate.hr_comments.ilike(search_pattern)  # Search in HR comments as well
+                Candidate.hr_comments.ilike(search_pattern)
             ]
-            # Add condition for searching in associated position names
             query_builder = query_builder.outerjoin(Candidate.positions).filter(
                 or_(*conditions, Position.position_name.ilike(search_pattern))
             )
@@ -778,12 +787,11 @@ def search_candidates():
         if status_filter and status_filter.lower() != 'all':
             query_builder = query_builder.filter(Candidate.current_status == status_filter)
 
-        # Use distinct to avoid duplicate candidates if they match on multiple positions or criteria
         pagination = query_builder.distinct().order_by(Candidate.submission_date.desc().nullslast()).paginate(
             page=page, per_page=per_page, error_out=False
         )
 
-        candidates_data = [cand.to_dict() for cand in pagination.items]  # Consider if cv_url is needed here
+        candidates_data = [cand.to_dict() for cand in pagination.items]
 
         return jsonify({
             "candidates": candidates_data,
@@ -820,7 +828,6 @@ def handle_settings():
         if 'interview_reminder_lead_time_minutes' in data:
             try:
                 lead_time = int(data['interview_reminder_lead_time_minutes'])
-                # Define reasonable min/max for lead time (e.g., 5 min to 2 days)
                 if not (5 <= lead_time <= 2 * 24 * 60):
                     return jsonify({"error": "Lead time out of range (5-2880 minutes)."}), 400
                 current_user.interview_reminder_lead_time_minutes = lead_time
@@ -829,7 +836,7 @@ def handle_settings():
                 return jsonify({"error": "Invalid lead time format. Must be an integer."}), 400
 
         if not updated:
-            return jsonify({"message": "No settings changed."}), 304  # Not Modified
+            return jsonify({"message": "No settings changed."}), 304
 
         try:
             db.session.commit()
@@ -845,7 +852,7 @@ def handle_settings():
             current_app.logger.error(f"Failed to save user settings for {current_user.id}: {e}", exc_info=True)
             return jsonify({"error": "Failed to save settings."}), 500
 
-    return jsonify({"error": "Method not allowed."}), 405  # Should not be reached
+    return jsonify({"error": "Method not allowed."}), 405
 
 
 @bp.route('/interviews/confirm/<string:confirmation_uuid_str>', methods=['GET'])
@@ -868,19 +875,18 @@ def confirm_interview(confirmation_uuid_str):
 
     if original_confirmation_status == 'Confirmed':
         html_response = f"<h1>Ήδη Επιβεβαιωμένο</h1><p>Η συνέντευξή σας στις {candidate.interview_datetime.astimezone(dt_timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC έχει ήδη επιβεβαιωθεί.</p>"
-    elif original_confirmation_status in ['Pending', 'Declined', None]:  # Allow re-confirmation if previously declined
+    elif original_confirmation_status in ['Pending', 'Declined', None]:
         candidate.candidate_confirmation_status = 'Confirmed'
         candidate.add_history_event(
             event_type="interview_confirmed_by_candidate",
             description=f"Candidate confirmed interview (was: {original_confirmation_status or 'N/A'}) via link.",
-            actor_username="Candidate",  # System event triggered by candidate action
+            actor_username="Candidate",
             details={"confirmation_uuid": confirmation_uuid_str}
         )
         try:
             db.session.commit()
             current_app.logger.info(
                 f"Candidate {candidate.candidate_id} confirmed interview (UUID: {confirmation_uuid_str}).")
-            # Send notification to recruiter
             try:
                 celery.send_task('tasks.communication.notify_recruiter_interview_confirmed_task',
                                  args=[str(candidate.candidate_id), candidate.company_id])
@@ -896,7 +902,7 @@ def confirm_interview(confirmation_uuid_str):
                 exc_info=True)
             html_response = "<h1>Σφάλμα Συστήματος</h1><p>Παρουσιάστηκε ένα πρόβλημα κατά την επιβεβαίωση. Παρακαλούμε δοκιμάστε αργότερα.</p>"
             http_code = 500
-    else:  # Should not happen with defined states
+    else:
         html_response = "<h1>Σφάλμα</h1><p>Αυτή η ενέργεια δεν είναι δυνατή για την τρέχουσα κατάσταση επιβεβαίωσης.</p>"
         http_code = 400
 
@@ -923,7 +929,7 @@ def decline_interview(confirmation_uuid_str):
 
     if original_confirmation_status == 'Declined':
         html_response = f"<h1>Ήδη Δηλωμένη Άρνηση</h1><p>Έχετε ήδη δηλώσει αδυναμία για τη συνέντευξη στις {candidate.interview_datetime.astimezone(dt_timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC.</p>"
-    elif original_confirmation_status in ['Pending', 'Confirmed', None]:  # Allow decline even if previously confirmed
+    elif original_confirmation_status in ['Pending', 'Confirmed', None]:
         candidate.candidate_confirmation_status = 'Declined'
         candidate.add_history_event(
             event_type="interview_declined_by_candidate",
@@ -935,7 +941,6 @@ def decline_interview(confirmation_uuid_str):
             db.session.commit()
             current_app.logger.info(
                 f"Candidate {candidate.candidate_id} declined/requested change for interview (UUID: {confirmation_uuid_str}).")
-            # Send notification to recruiter
             try:
                 celery.send_task('tasks.communication.notify_recruiter_interview_declined_task',
                                  args=[str(candidate.candidate_id), candidate.company_id])
@@ -950,7 +955,7 @@ def decline_interview(confirmation_uuid_str):
                 f"Error committing interview decline for candidate {candidate.candidate_id}: {e_commit}", exc_info=True)
             html_response = "<h1>Σφάλμα Συστήματος</h1><p>Παρουσιάστηκε ένα πρόβλημα κατά την επεξεργασία του αιτήματός σας. Παρακαλούμε δοκιμάστε αργότερα.</p>"
             http_code = 500
-    else:  # Should not happen
+    else:
         html_response = "<h1>Σφάλμα</h1><p>Αυτή η ενέργεια δεν είναι δυνατή για την τρέχουσα κατάσταση επιβεβαίωσης.</p>"
         http_code = 400
 

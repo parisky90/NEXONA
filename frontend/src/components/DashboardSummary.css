@@ -1,50 +1,62 @@
 /* frontend/src/components/DashboardSummary.css */
-/* v4 - Horizontal Centered Cards */
-
-.dashboard-summary-container { /* Add a wrapper div */
-  display: flex;
-  justify-content: center; /* Center the row of items */
-  width: 100%; /* Take full width */
-  margin-bottom: 25px; /* Space below the summary */
+.dashboard-summary-container {
+  width: 100%;
+  height: 100%; /* Για να πιάνει το ύψος του wrapper */
+  display: flex; /* Για να μπορεί το grid να επεκταθεί */
+  flex-direction: column;
 }
 
-.dashboard-summary-row { /* This will contain the items */
-  display: flex;
-  flex-wrap: wrap; /* Allow wrapping on smaller screens */
-  gap: 15px; /* Space between items */
-  justify-content: center; /* Center items within the row if they wrap */
-  width: 100%; /* Adjust max-width if needed */
-  max-width: 1100px; /* Optional: Limit max width of the summary row */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); /* Λίγο πιο φαρδιά κουτάκια */
+  gap: 1rem; 
+  width: 100%;
+  flex-grow: 1; /* Για να γεμίσει τον διαθέσιμο χώρο */
 }
 
 .summary-item {
-  background-color: var(--sidebar-bg); /* Very light gray */
-  padding: 15px 20px; /* Slightly adjusted padding */
-  border-radius: 6px;
+  background-color: #ffffff; 
+  padding: 1.25rem; /* 20px, για περισσότερο "αέρα" */
+  border-radius: 10px; 
   text-align: center;
-  min-width: 130px; /* Slightly wider minimum */
-  flex: 1; /* Allow items to grow/shrink */
-  flex-basis: 140px; /* Suggests a base size */
-  /* Remove max-width here, let flexbox handle distribution */
-  /* max-width: 200px; */
-  box-shadow: var(--box-shadow-sm);
-  border: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 110px; 
+  box-shadow: 0 3px 6px rgba(0,0,0,0.05), 0 2px 4px rgba(0,0,0,0.04); /* Ελαφρώς πιο έντονη σκιά */
+  border: 1px solid #f3f4f6; /* Πολύ διακριτικό border */
+  transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
 }
 
-.summary-item .count {
-  display: block;
-  font-size: 1.8rem; /* Slightly smaller count */
-  font-weight: 600;
-  color: var(--text-dark-gray);
-  margin-bottom: 3px; /* Less space */
-  line-height: 1.2;
+.summary-item:hover {
+  transform: translateY(-3px); /* Μικρό lift effect στο hover */
+  box-shadow: 0 6px 12px rgba(0,0,0,0.07), 0 4px 8px rgba(0,0,0,0.05);
 }
 
-.summary-item .label {
+.summary-item .summary-value { 
   display: block;
-  font-size: 0.8rem; /* Smaller label */
-  color: var(--text-medium-gray);
+  font-size: 2.5rem; /* 40px, πιο μεγάλο και ευδιάκριτο */
+  font-weight: 700; /* Πιο έντονο */
+  color: #007bff; /* <-- ΠΡΟΣΘΗΚΗ ΧΡΩΜΑΤΟΣ (Μπλε) */
+  margin-bottom: 0.375rem; /* 6px */
+  line-height: 1.1;
+}
+
+/* Ειδικά χρώματα για κάποια values */
+.summary-item[data-status="total_candidates"] .summary-value { color: #1f2937; }
+.summary-item[data-status="hired"] .summary-value { color: #16a34a; } /* Πράσινο για Hired */
+.summary-item[data-status="rejected"] .summary-value,
+.summary-item[data-status="declined"] .summary-value,
+.summary-item[data-status="parsingfailed"] .summary-value { color: #ef4444; } /* Κόκκινο για αρνητικά */
+
+
+.summary-item .summary-label { 
+  display: block;
+  font-size: 0.8rem; 
+  color: #4b5563; /* Πιο σκούρο γκρι για καλύτερη αντίθεση */
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  word-wrap: break-word;
+  letter-spacing: 0.05em; 
+  margin-top: 0.375rem; 
+  font-weight: 500;
 }

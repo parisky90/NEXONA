@@ -3,36 +3,63 @@
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  background-color: #f8f9fa;
+  width: 100%; 
+  background-color: var(--app-bg, #f8f9fa); 
 }
 
 .app-header {
-  background-color: #ffffff;
-  padding: 10px 25px;
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08);
-  z-index: 1000;
+  background-color: var(--content-bg, #ffffff);
+  padding: 0px 24px; 
+  box-shadow: var(--box-shadow-sm, 0 1px 3px rgba(0,0,0,0.1)); 
   display: flex;
+  align-items: center;
+  height: 80px; /* <-- ΑΥΞΗΣΗ ΥΨΟΥΣ HEADER */
+  position: sticky;
+  top: 0;
+  z-index: 1020; 
+  border-bottom: 1px solid var(--border-color, #e5e7eb); 
+  width: 100%; 
+  box-sizing: border-box;
+}
+
+.app-logo-link {
+  display: flex; 
   align-items: center;
 }
 
 .app-logo {
-  height: 35px;
-  width: auto;
+  height: 60px; /* <-- ΑΚΟΜΑ ΜΕΓΑΛΥΤΕΡΟ ΛΟΓΟΤΥΠΟ */
+  /* Προσάρμοσε αυτή την τιμή ανάλογα με το πόσο μεγάλο το θέλεις. */
+  /* Βεβαιώσου ότι το ύψος του .app-header είναι επαρκές. */
+  width: auto; 
+  display: block; 
 }
 
 .main-layout-container {
   display: flex;
-  flex-grow: 1;
+  flex-grow: 1; 
+  width: 100%;
+  overflow: hidden; 
 }
 
 .main-content-area {
   flex-grow: 1;
-  padding: 25px;
-  overflow-y: auto;
-  background-color: #f8f9fa;
+  padding: 24px; 
+  overflow-y: auto; 
+  background-color: var(--app-bg, #f9fafb); 
+  width: 100%; 
+  box-sizing: border-box;
 }
 
-a {
-  text-decoration: none;
-  color: inherit;
+@media (max-width: 768px) {
+  .app-header { 
+    height: 70px; /* Προσαρμογή και για mobile */
+    padding: 0 16px; 
+  }
+  .app-logo {
+    height: 50px; /* Προσαρμογή και για mobile */
+  }
+  .main-content-area { 
+    padding: 16px; 
+  }
 }
