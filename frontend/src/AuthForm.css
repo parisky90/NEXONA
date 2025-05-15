@@ -1,71 +1,98 @@
 /* frontend/src/AuthForm.css */
+/* Αυτό το αρχείο μπορεί να χρησιμοποιείται και από το RegisterPage.jsx */
+
 .auth-container {
-  max-width: 450px;
-  margin: 50px auto;
-  padding: 25px 30px;
-  background-color: var(--content-bg); /* Use your variable */
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  box-shadow: var(--box-shadow); /* Use your variable */
+  max-width: 420px; /* Λίγο μεγαλύτερο για άνεση */
+  margin: 60px auto; /* Περισσότερο margin από πάνω */
+  padding: 30px 35px; /* Προσαρμοσμένο padding */
+  background-color: var(--content-bg, #ffffff); 
+  border: 1px solid var(--border-color, #dee2e6);
+  border-radius: var(--border-radius-lg, 12px); /* Πιο στρογγυλεμένο */
+  box-shadow: var(--box-shadow-md, 0 0.5rem 1rem rgba(0,0,0,.15)); 
 }
 
 .auth-container h2 {
   text-align: center;
-  margin-bottom: 25px;
-  color: var(--text-dark-gray);
+  margin-top: 0;
+  margin-bottom: 1.5rem; /* 24px */
+  color: var(--text-primary, #212529);
   font-weight: 600;
+  font-size: 1.75rem; /* 28px */
 }
 
 .auth-form .form-group {
-  margin-bottom: 20px;
+  margin-bottom: 1.25rem; /* 20px */
 }
 
 .auth-form .form-group label {
   display: block;
-  margin-bottom: 8px;
+  margin-bottom: 0.5rem; /* 8px */
   font-weight: 500;
-  color: var(--text-medium-gray);
+  color: var(--text-secondary, #495057);
+  font-size: 0.9rem; /* 14.4px */
 }
 
-.auth-form input.input-light-gray { /* Εφαρμόζει το existing style σου */
-  width: 100%;
-  box-sizing: border-box; /* Για να μην ξεχειλίζει το padding */
+/* --- ΚΡΙΣΙΜΟ ΓΙΑ ΤΟ ΠΛΑΤΟΣ ΤΩΝ INPUTS --- */
+.auth-form input[type="text"],
+.auth-form input[type="email"],
+.auth-form input[type="password"] {
+  width: 100%; /* Να πιάνουν όλο το πλάτος του form-group */
+  padding: 0.75rem 1rem; /* 12px 16px - Μεγαλύτερο padding */
+  font-size: 1rem; /* 16px */
+  line-height: 1.5;
+  border: 1px solid var(--border-color, #ced4da);
+  border-radius: var(--border-radius-md, 8px); /* Πιο στρογγυλεμένο */
+  background-color: var(--content-bg, #ffffff); /* Για να ταιριάζει με το input-light-gray αν χρειαστεί */
+  color: var(--text-primary, #212529);
+  box-sizing: border-box; /* Σημαντικό! */
+  transition: border-color 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
 }
 
-.auth-form .button-primary.auth-button { /* Εφαρμόζει το existing style σου */
+.auth-form input[type="text"]:focus,
+.auth-form input[type="email"]:focus,
+.auth-form input[type="password"]:focus {
+  border-color: var(--primary-color, #86b7fe);
+  outline: 0;
+  box-shadow: 0 0 0 0.25rem rgba(0, 123, 255, 0.25); /* Χρώμα focus */
+}
+/* --- ΤΕΛΟΣ ΚΡΙΣΙΜΟΥ ΤΜΗΜΑΤΟΣ --- */
+
+
+.auth-form .button-primary.auth-button { 
   width: 100%;
-  padding: 10px 15px;
-  font-size: 1.05rem;
-  margin-top: 10px; /* Λίγο κενό πριν το κουμπί */
+  padding: 0.75rem 1rem; /* 12px 16px */
+  font-size: 1rem; /* 16px */
+  margin-top: 1.5rem; /* Περισσότερο κενό πριν το κουμπί */
 }
 
 .auth-form .error-message {
-  margin-bottom: 15px; /* Ήδη υπάρχει στο App.css, αλλά για σιγουριά */
+  margin-bottom: 1rem; 
   font-size: 0.9rem;
+  /* Τα υπόλοιπα στυλ από το App.css */
 }
 .auth-form .success-message {
-  margin-bottom: 15px;
-  padding: 10px;
-  background-color: #d1e7dd; /* Light green */
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background-color: #d1e7dd; 
   border: 1px solid #a3cfbb;
-  color: #0f5132; /* Dark green text */
-  border-radius: 0.25rem;
+  color: #0f5132; 
+  border-radius: var(--border-radius-sm);
   font-size: 0.9rem;
   text-align: center;
 }
 
 .auth-link {
   text-align: center;
-  margin-top: 20px;
+  margin-top: 1.5rem; /* 24px */
   font-size: 0.9rem;
 }
 
 .auth-link a {
-  color: var(--primary-color);
+  color: var(--text-link, #007bff);
   text-decoration: none;
   font-weight: 500;
 }
-
 .auth-link a:hover {
   text-decoration: underline;
+  color: var(--text-link-hover, #0056b3);
 }

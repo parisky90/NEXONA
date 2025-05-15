@@ -1,172 +1,219 @@
-// frontend/src/pages/CandidateListPage.jsx
+// frontend/src/pages/CompanyUsersPage.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import DashboardSummary from '../components/DashboardSummary';
-import CandidateList from '../components/CandidateList';
-import SearchBar from '../components/SearchBar';
-import apiClient from '../api';
-import { useAuth } from '../App';
-import { useParams } from 'react-router-dom';
+import { useAuth } from '../App'; 
+import { getCompanyUsers, createCompanyUser, toggleCompanyUserStatus } from '../services/companyAdminService';
+// import './AdminPages.css'; // Αν έχεις κοινό CSS για admin σελίδες
+// Εναλλακτικά, μπορείς να χρησιμοποιήσεις το App.css ή να φτιάξεις ένα CompanyUsersPage.css
 
-const capitalize = (s) => s && s[0].toUpperCase() + s.slice(1);
+const ITEMS_PER_PAGE_COMPANY = 10;
 
-const getListTitle = (statusRouteParam) => {
-    if (!statusRouteParam) return 'All Candidates';
-    const statusMappings = {
-        'needs-review': 'NeedsReview', 'accepted': 'Accepted', 'interested': 'Interested',
-        'interview': 'Interview', 'evaluation': 'Evaluation', 'offermade': 'OfferMade',
-        'hired': 'Hired', 'rejected': 'Rejected', 'declined': 'Declined',
-        'processing': 'Processing', 'parsing-failed': 'ParsingFailed'
-    };
-    const apiStatus = statusMappings[statusRouteParam.toLowerCase()] || capitalize(statusRouteParam);
-    switch (apiStatus) {
-        case 'NeedsReview': return 'Candidates Needing Review';
-        case 'Accepted': return 'Accepted Candidates';
-        case 'Interested': return 'Interested Candidates';
-        case 'Interview': return 'Candidates for Interview';
-        case 'Evaluation': return 'Candidates Under Evaluation';
-        case 'OfferMade': return 'Candidates With Offer Made';
-        case 'Hired': return 'Hired Candidates';
-        case 'Rejected': return 'Rejected Candidates';
-        case 'Declined': return 'Declined Candidates (by Candidate)';
-        case 'Processing': return 'Processing CVs';
-        case 'ParsingFailed': return 'CVs with Parsing Failed';
-        default: return `${capitalize(apiStatus)} Candidates`;
-    }
-};
-
-function CandidateListPage() {
-  const { status: statusFromUrl } = useParams();
+function CompanyUsersPage() {
   const { currentUser } = useAuth();
-  const [summaryData, setSummaryData] = useState(null);
-  const [candidates, setCandidates] = useState([]);
-  const [isLoadingSummary, setIsLoadingSummary] = useState(true);
-  const [isLoadingList, setIsLoadingList] = useState(true);
-  const [error, setError] = useState(null);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [users, setUsers] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
-  const [totalCandidates, setTotalCandidates] = useState(0);
-  const ITEMS_PER_PAGE_LIST = 15;
+  const [totalUsers, setTotalUsers] = useState(0);
 
-  const statusMappingsForApi = {
-      'needs-review': 'NeedsReview', 'accepted': 'Accepted', 'interested': 'Interested',
-      'interview': 'Interview', 'evaluation': 'Evaluation', 'offermade': 'OfferMade',
-      'hired': 'Hired', 'rejected': 'Rejected', 'declined': 'Declined',
-      'processing': 'Processing', 'parsing-failed': 'ParsingFailed'
-  };
-  const apiStatus = statusMappingsForApi[statusFromUrl?.toLowerCase()] || capitalize(statusFromUrl || 'All');
-  const listTitle = getListTitle(statusFromUrl);
+  const [showCreateForm, setShowCreateForm] = useState(false); // <<< ΑΥΤΟ ΤΟ STATE ΕΛΕΓΧΕΙ ΤΗ ΦΟΡΜΑ
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [newUserFormData, setNewUserFormData] = useState({
+    username: '',
+    email: '',
+    password: '',
+    confirmPassword: '',
+  });
 
-  const companyIdForRequests = currentUser?.role === 'superadmin' ? null : currentUser?.company_id;
-
-  const fetchSummary = useCallback(async () => {
-    setIsLoadingSummary(true);
+  const fetchCompanyUsersData = useCallback(async (page = 1) => {
+    if (!currentUser || currentUser.role !== 'company_admin') {
+      setError("Access denied or user not a company admin.");
+      return;
+    }
+    setIsLoading(true); setError('');
     try {
-      const params = companyIdForRequests ? { company_id: companyIdForRequests } : {};
-      const res = await apiClient.get('/dashboard/summary', { params });
-      setSummaryData(res.data);
+      const params = { page, per_page: ITEMS_PER_PAGE_COMPANY };
+      const data = await getCompanyUsers(params); // Δεν χρειάζεται company_id, το παίρνει το backend από το session
+      setUsers(data.users || []);
+      setCurrentPage(data.current_page || 1);
+      setTotalPages(data.total_pages || 0);
+      setTotalUsers(data.total_users || 0);
     } catch (err) {
-      if (!error) setError(err.response?.data?.error || 'Failed to load summary.');
-      setSummaryData(null);
+      setError(err.error || err.message || 'Failed to load company users.');
+      setUsers([]); setTotalPages(0); setTotalUsers(0);
     } finally {
-      setIsLoadingSummary(false);
+      setIsLoading(false);
     }
-  }, [companyIdForRequests, error, apiStatus]);
-
-  const fetchCandidates = useCallback(async (page = 1, query = searchTerm) => {
-    if (apiStatus === 'All' && !query) {
-        setCandidates([]); setIsLoadingList(false); setTotalPages(0); setTotalCandidates(0);
-        return;
-    }
-    setIsLoadingList(true);
-    setError(null);
-    try {
-      const params = { page, per_page: ITEMS_PER_PAGE_LIST };
-      if (companyIdForRequests) params.company_id = companyIdForRequests;
-      let response;
-      if (query) {
-        params.q = encodeURIComponent(query);
-        if (apiStatus !== 'All') params.status = apiStatus;
-        response = await apiClient.get('/search', { params });
-      } else {
-        response = await apiClient.get(`/candidates/${apiStatus}`, { params });
-      }
-      setCandidates(Array.isArray(response.data.candidates) ? response.data.candidates : []);
-      setTotalPages(response.data.total_pages || 0);
-      setTotalCandidates(response.data.total_results || 0);
-      setCurrentPage(response.data.current_page || 1);
-    } catch (err) {
-      setError(err.response?.data?.error || `Failed to load ${apiStatus} candidates.`);
-      setCandidates([]); setTotalPages(0); setTotalCandidates(0);
-    } finally {
-      setIsLoadingList(false);
-    }
-  }, [apiStatus, companyIdForRequests, searchTerm]);
+  }, [currentUser]);
 
   useEffect(() => {
-    setError(null);
-    fetchSummary();
-    if (apiStatus !== 'All' || searchTerm) {
-        fetchCandidates(1, searchTerm);
-    } else {
-        setCandidates([]); setIsLoadingList(false); setTotalPages(0); setTotalCandidates(0);
+    if (currentUser && currentUser.role === 'company_admin') { // Έλεγχος ρόλου πριν το fetch
+        fetchCompanyUsersData(1);
     }
-  }, [apiStatus, fetchSummary, fetchCandidates, searchTerm]);
+  }, [fetchCompanyUsersData, currentUser]);
 
-  const handleSearchChange = (e) => setSearchTerm(e.target.value);
-  const handleSearchSubmit = () => { setCurrentPage(1); fetchCandidates(1, searchTerm); };
-  const handlePageChange = (newPage) => { fetchCandidates(newPage, searchTerm); };
-  const handleCandidateDeletedOnListPage = () => { fetchSummary(); fetchCandidates(currentPage, searchTerm); }; // Re-fetch current page
+  const handleNewUserFormChange = (e) => {
+    const { name, value } = e.target;
+    setNewUserFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleCreateUserSubmit = async (e) => {
+    e.preventDefault();
+    setCreateError('');
+    if (newUserFormData.password !== newUserFormData.confirmPassword) {
+      setCreateError('Passwords do not match.'); return;
+    }
+    if (newUserFormData.password.length < 8) {
+      setCreateError('Password must be at least 8 characters long.'); return;
+    }
+    setIsSubmitting(true);
+    try {
+      const { confirmPassword, ...payload } = newUserFormData;
+      await createCompanyUser(payload); // Το company_id θα προστεθεί στο backend
+      setShowCreateForm(false); // Κλείσιμο φόρμας μετά την επιτυχία
+      setNewUserFormData({ username: '', email: '', password: '', confirmPassword: '' });
+      fetchCompanyUsersData(1); 
+    } catch (err) {
+      setCreateError(err.error || err.message || 'Failed to create user.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleToggleUserStatus = async (userId, currentIsActive) => {
+    if (currentUser && currentUser.id === userId) {
+        alert("You cannot change your own active status."); return;
+    }
+    const newStatus = !currentIsActive;
+    if (window.confirm(`Are you sure you want to ${newStatus ? 'activate' : 'deactivate'} this user?`)) {
+      try {
+        await toggleCompanyUserStatus(userId, newStatus);
+        fetchCompanyUsersData(currentPage); 
+      } catch (err) {
+        alert(`Failed to update user status: ${err.error || err.message}`);
+      }
+    }
+  };
+
+  const handlePageChange = (newPage) => {
+    if (newPage >= 1 && newPage <= totalPages) fetchCompanyUsersData(newPage);
+  };
+
+  if (!currentUser || currentUser.role !== 'company_admin') {
+    return <div className="card-style error-message">Access Denied.</div>;
+  }
 
   return (
-    // Η κλάση card-style θα εφαρμοστεί από το App.css ή το DashboardPage.css αν είναι global
-    // Αν όχι, μπορείς να την προσθέσεις εδώ: className="candidate-list-page card-style"
-    <div className="candidate-list-page"> 
-       <h2 style={{textAlign: 'center', marginBottom: '1rem', color: 'var(--text-primary)'}}>{listTitle}</h2>
-       
-       {isLoadingSummary ? <p className="loading-placeholder">Loading summary...</p> : null}
-       {summaryData && <DashboardSummary summary={summaryData} />}
-       {/* Το error του summary θα εμφανιστεί αν το summaryData είναι null */}
-       {!isLoadingSummary && !summaryData && error && 
-         <p className="error-message" style={{textAlign: 'center'}}>Error loading summary: {error}</p>
-       }
+    // Εφάρμοσε .card-style από το App.css ή το DashboardPage.css (αν είναι global)
+    // ή δημιούργησε ένα AdminPages.css
+    <div className="admin-page-container card-style"> 
+      <h1>Manage Users for {currentUser.company_name || 'Your Company'}</h1>
 
-      <SearchBar
-          searchTerm={searchTerm}
-          onSearchChange={handleSearchChange}
-          onSearchSubmit={handleSearchSubmit}
-          placeholder={`Search in ${listTitle}...`}
-          // ΑΦΑΙΡΕΣΗ inputClassName και buttonClassName ΓΙΑ ΝΑ ΠΑΡΕΙ ΤΑ DEFAULT STYLES ΤΟΥ SearchBar.css
-       />
+      {/* --- ΚΟΥΜΠΙ ΚΑΙ ΦΟΡΜΑ ΠΡΟΣΘΗΚΗΣ --- */}
+      <div className="add-user-section" style={{ marginBottom: '1.5rem', paddingBottom: '1.5rem', borderBottom: '1px solid var(--border-color)' }}>
+        {!showCreateForm && (
+          <button 
+            onClick={() => { setShowCreateForm(true); setCreateError(''); }} 
+            className="button-action button-primary" // Χρησιμοποίησε τις global κλάσεις
+          >
+            + Add New User
+          </button>
+        )}
 
-      {isLoadingList && <p className="loading-placeholder" style={{marginTop: '1rem'}}>Loading candidates...</p>}
-      {/* Εμφάνιση σφάλματος λίστας μόνο αν δεν φορτώνει ΚΑΙ υπάρχει σφάλμα */}
-      {!isLoadingList && error && <p className="error-message" style={{textAlign: 'center', marginTop: '1rem'}}>{error}</p>}
-      
-      {!isLoadingList && !error && candidates.length === 0 && (
-        <p className="empty-list-message">
-            {searchTerm ? `No candidates found matching '${searchTerm}' in ${listTitle}.` : 
-             apiStatus === 'All' ? 'Please enter a search term to find candidates.' :
-             `No candidates currently in ${listTitle}.`}
-        </p>
-       )}
+        {showCreateForm && (
+          // Το card-style εδώ είναι για να ξεχωρίζει η φόρμα
+          <div className="create-user-form card-style" style={{ marginTop: '1rem', borderColor: 'var(--primary-color)' }}> 
+            <h3 style={{marginTop:0, marginBottom:'1rem'}}>Create New User</h3>
+            <form onSubmit={handleCreateUserSubmit}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '1rem' }}>
+                <div className="form-group">
+                  <label htmlFor="username-company">Username:</label>
+                  <input type="text" id="username-company" name="username" value={newUserFormData.username} onChange={handleNewUserFormChange} required className="input-light-gray" autoComplete="off" />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="email-company">Email:</label>
+                  <input type="email" id="email-company" name="email" value={newUserFormData.email} onChange={handleNewUserFormChange} required className="input-light-gray" autoComplete="off" />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="password-company">Password:</label>
+                  <input type="password" id="password-company" name="password" value={newUserFormData.password} onChange={handleNewUserFormChange} required minLength="8" className="input-light-gray" autoComplete="new-password" />
+                </div>
+                <div className="form-group">
+                  <label htmlFor="confirmPassword-company">Confirm Password:</label>
+                  <input type="password" id="confirmPassword-company" name="confirmPassword" value={newUserFormData.confirmPassword} onChange={handleNewUserFormChange} required minLength="8" className="input-light-gray" autoComplete="new-password" />
+                </div>
+              </div>
+              {createError && <p className="error-message" style={{ marginTop: '1rem' }}>{createError}</p>}
+              <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', justifyContent:'flex-end' }}>
+                <button type="button" onClick={() => {setShowCreateForm(false); setCreateError('');}} className="button-action button-secondary" disabled={isSubmitting}>
+                  Cancel
+                </button>
+                <button type="submit" className="button-action button-primary" disabled={isSubmitting}>
+                  {isSubmitting ? 'Creating...' : 'Create User'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+      </div>
+      {/* --- ΤΕΛΟΣ ΚΟΥΜΠΙΟΥ ΚΑΙ ΦΟΡΜΑΣ --- */}
 
-      {!isLoadingList && !error && candidates.length > 0 && (
-         <CandidateList 
-            candidates={candidates} 
-            onCandidateDeleted={handleCandidateDeletedOnListPage}
-        />
+
+      {isLoading && <div className="loading-placeholder">Loading users...</div>}
+      {error && !isLoading && <p className="error-message">{error}</p>}
+      {!isLoading && !error && users.length === 0 && (
+        <p className="empty-list-message">No users found in your company.</p>
       )}
-      
-      {!isLoadingList && totalPages > 1 && (
-        <div className="pagination-controls">
-          <button onClick={() => handlePageChange(currentPage - 1)} disabled={currentPage === 1 || isLoadingList} className="button-action button-secondary">Previous</button>
-          <span>Page {currentPage} of {totalPages} (Total: {totalCandidates} candidates)</span>
-          <button onClick={() => handlePageChange(currentPage + 1)} disabled={currentPage === totalPages || isLoadingList} className="button-action button-secondary">Next</button>
-        </div>
+
+      {!isLoading && users.length > 0 && (
+        <>
+          <div className="table-responsive"> {/* Για scroll σε μικρές οθόνες */}
+            <table className="candidate-table"> {/* Χρησιμοποίησε το styling από το CandidateList.css */}
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Username</th>
+                  <th>Email</th>
+                  <th>Active</th>
+                  <th>Created At</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((user) => (
+                  <tr key={user.id}>
+                    <td>{user.id}</td>
+                    <td>{user.username}</td>
+                    <td>{user.email}</td>
+                    <td>{user.is_active ? 'Yes' : 'No'}</td>
+                    <td>{user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</td>
+                    <td>
+                      <button
+                        onClick={() => handleToggleUserStatus(user.id, user.is_active)}
+                        className={`button-action ${user.is_active ? 'button-reject' : 'button-confirm'}`}
+                        disabled={currentUser.id === user.id}
+                        title={currentUser.id === user.id ? "Cannot change own status" : (user.is_active ? 'Deactivate' : 'Activate')}
+                      >
+                        {user.is_active ? 'Deactivate' : 'Activate'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {totalPages > 1 && (
+            <div className="pagination-controls">
+              <button onClick={() => handlePageChange(currentPage - 1)} disabled={currentPage === 1 || isLoading} className="button-action button-secondary">Previous</button>
+              <span>Page {currentPage} of {totalPages} (Total: {totalUsers} users)</span>
+              <button onClick={() => handlePageChange(currentPage + 1)} disabled={currentPage === totalPages || isLoading} className="button-action button-secondary">Next</button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
 }
 
-export default CandidateListPage;
+export default CompanyUsersPage;

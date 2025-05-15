@@ -9,11 +9,12 @@
 
 .app-header {
   background-color: var(--content-bg, #ffffff);
-  padding: 0px 24px; 
+  padding: 5px 24px; 
   box-shadow: var(--box-shadow-sm, 0 1px 3px rgba(0,0,0,0.1)); 
   display: flex;
-  align-items: center;
-  height: 80px; /* <-- ΑΥΞΗΣΗ ΥΨΟΥΣ HEADER */
+  align-items: center; 
+  min-height: 70px; /* Διατήρησε ένα λογικό min-height για το header */
+  /* Το πραγματικό ύψος θα προσαρμοστεί ανάλογα με το logo + padding */
   position: sticky;
   top: 0;
   z-index: 1020; 
@@ -28,11 +29,15 @@
 }
 
 .app-logo {
-  height: 60px; /* <-- ΑΚΟΜΑ ΜΕΓΑΛΥΤΕΡΟ ΛΟΓΟΤΥΠΟ */
-  /* Προσάρμοσε αυτή την τιμή ανάλογα με το πόσο μεγάλο το θέλεις. */
-  /* Βεβαιώσου ότι το ύψος του .app-header είναι επαρκές. */
-  width: auto; 
-  display: block; 
+  height: 60px !important;       /* <<-- ΔΟΚΙΜΑΣΕ 60px (ή 65px, 70px) */
+  /* Αν το header έχει padding 5px πάνω/κάτω, και min-height 70px, */
+  /* τότε ένα logo 60px θα έχει 5px κενό πάνω και 5px κάτω. */
+  width: auto !important;        
+  /* min-height: 55px !important;  Μπορείς να το αφαιρέσεις αν το height είναι αρκετά μεγάλο */
+  max-height: none !important;   
+  max-width: none !important;    
+  display: block !important; 
+  object-fit: contain;          
 }
 
 .main-layout-container {
@@ -53,11 +58,12 @@
 
 @media (max-width: 768px) {
   .app-header { 
-    height: 70px; /* Προσαρμογή και για mobile */
-    padding: 0 16px; 
+    min-height: 55px; /* Προσαρμογή και για mobile */
+    padding: 5px 16px; 
   }
   .app-logo {
-    height: 50px; /* Προσαρμογή και για mobile */
+    height: 40px !important; /* Προσαρμογή και για mobile */
+    min-height: 35px !important;
   }
   .main-content-area { 
     padding: 16px; 

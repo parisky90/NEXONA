@@ -1,174 +1,137 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '../App'; // Import the useAuth hook to access currentUser
-import apiClient from '../api'; // Import the configured axios instance
-// Optional: Import a notification library (e.g., react-toastify)
-// import { toast } from 'react-toastify';
+// frontend/src/pages/SettingsPage.jsx
+import React, { useState, useEffect } from 'react'; // Αφαίρεσα το useCallback αν δεν χρησιμοποιείται
+import { useAuth } from '../App'; 
+import apiClient from '../api'; 
 
 function SettingsPage() {
-  const { currentUser, login: updateAuthContextUser } = useAuth(); // Get user and the login function (to update context)
+  const { currentUser, login: updateAuthContextUser } = useAuth(); 
   const [formData, setFormData] = useState({
-    enable_interview_reminders: true,
-    reminder_lead_time_minutes: 60,
-    email_interview_reminders: false,
+    enable_email_interview_reminders: true, // Το όνομα πρέπει να ταιριάζει με το backend model/API
+    interview_reminder_lead_time_minutes: 60, // Το όνομα πρέπει να ταιριάζει
+    // email_interview_reminders: false, // Αυτό το είχες, αλλά δεν φαίνεται να υπάρχει στο backend settings endpoint
   });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
 
-  // Initialize form data from currentUser when the component mounts or user changes
   useEffect(() => {
     if (currentUser) {
       setFormData({
-        enable_interview_reminders: currentUser.enable_interview_reminders ?? true,
-        reminder_lead_time_minutes: currentUser.reminder_lead_time_minutes ?? 60,
-        email_interview_reminders: currentUser.email_interview_reminders ?? false,
+        // Βεβαιώσου ότι τα ονόματα των πεδίων ταιριάζουν με αυτά που στέλνει το backend στο /session και περιμένει το /settings PUT
+        enable_interview_reminders: currentUser.enable_email_interview_reminders ?? true, // Αν το backend στέλνει enable_email_interview_reminders
+        interview_reminder_lead_time_minutes: currentUser.interview_reminder_lead_time_minutes ?? 60,
       });
     }
   }, [currentUser]);
 
-  // Handle changes in form inputs
   const handleChange = (event) => {
     const { name, value, type, checked } = event.target;
     setFormData(prevData => ({
       ...prevData,
-      [name]: type === 'checkbox' ? checked : (type === 'number' ? parseInt(value, 10) || 0 : value)
+      [name]: type === 'checkbox' ? checked : (name === 'interview_reminder_lead_time_minutes' ? parseInt(value, 10) || 0 : value)
     }));
-    // Clear messages on change
     setError('');
     setSuccessMessage('');
   };
 
-  // Handle form submission
   const handleSubmit = async (event) => {
     event.preventDefault();
     setIsLoading(true);
     setError('');
     setSuccessMessage('');
 
-    // Basic validation (optional, backend validates too)
-    if (formData.reminder_lead_time_minutes < 5 || formData.reminder_lead_time_minutes > 1440) {
-        setError('Η υπενθύμιση πρέπει να είναι μεταξύ 5 και 1440 λεπτών.');
-        // toast.error('Η υπενθύμιση πρέπει να είναι μεταξύ 5 και 1440 λεπτών.');
+    const payload = {
+        enable_email_interview_reminders: formData.enable_interview_reminders, // Προσαρμογή ονόματος αν χρειάζεται
+        interview_reminder_lead_time_minutes: formData.interview_reminder_lead_time_minutes
+    };
+
+    if (payload.interview_reminder_lead_time_minutes < 5 || payload.interview_reminder_lead_time_minutes > (2 * 24 * 60) /* 2 days */) {
+        setError('Reminder lead time must be between 5 and 2880 minutes.');
         setIsLoading(false);
         return;
     }
 
     try {
-      const response = await apiClient.put('/settings', formData);
-      setSuccessMessage('Οι ρυθμίσεις αποθηκεύτηκαν επιτυχώς!');
-      // toast.success('Οι ρυθμίσεις αποθηκεύτηκαν επιτυχώς!');
-
-      // --- Update Auth Context ---
-      // It's good practice to update the context so the rest of the app
-      // sees the changes immediately without needing a refresh.
-      // We merge the updated settings into the existing currentUser object.
+      const response = await apiClient.put('/settings', payload); // Στέλνουμε το payload
+      setSuccessMessage(response.data.message ||'Settings saved successfully!');
+      
       if (response.data && response.data.settings) {
-         // Make sure currentUser exists before trying to spread it
          if (currentUser) {
-             const updatedUser = {
-                 ...currentUser,
-                 ...response.data.settings // Overwrite with the settings returned from backend
-             };
-             updateAuthContextUser(updatedUser); // Update the context
-             console.log("Auth context updated with new settings:", updatedUser);
-         } else {
-            console.warn("CurrentUser context was null, cannot update settings in context.");
+             const updatedUser = { ...currentUser, ...response.data.settings };
+             updateAuthContextUser(updatedUser); 
          }
       }
-      // --- End Update Auth Context ---
-
     } catch (err) {
-      console.error("Failed to update settings:", err);
-      const errorMessage = err.response?.data?.error || 'Αποτυχία αποθήκευσης ρυθμίσεων. Παρακαλώ δοκιμάστε ξανά.';
+      const errorMessage = err.response?.data?.error || 'Failed to save settings.';
       setError(errorMessage);
-      // toast.error(errorMessage);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Render loading state if currentUser is not yet available
   if (!currentUser) {
-    return <div className="loading-placeholder">Φόρτωση ρυθμίσεων...</div>;
+    return <div className="loading-placeholder card-style">Loading settings...</div>;
   }
 
   return (
-    <div className="page-container card-style"> {/* Add card-style for consistency */}
-      <h1>Ρυθμίσεις Χρήστη</h1>
-      <p>Εδώ μπορείτε να διαμορφώσετε τις προτιμήσεις σας για τις ειδοποιήσεις.</p>
+    // Εφάρμοσε card-style από το App.css ή το DashboardPage.css
+    <div className="settings-page-container card-style"> 
+      <h1>User Settings</h1>
+      <p>Configure your preferences for notifications and reminders.</p>
 
       <form onSubmit={handleSubmit} style={{ marginTop: '2rem' }}>
-        {/* Display messages */}
         {error && <p className="error-message">{error}</p>}
-        {successMessage && <p style={{ color: 'green', marginBottom: '1rem' }}>{successMessage}</p>} {/* Simple success message */}
+        {successMessage && <p className="success-message" style={{color: 'green', marginBottom: '1rem'}}>{successMessage}</p>}
 
-        {/* Enable Reminders Checkbox */}
         <div style={{ marginBottom: '1.5rem' }}>
-          <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+          <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', fontWeight: '500' }}>
             <input
               type="checkbox"
-              name="enable_interview_reminders"
+              name="enable_interview_reminders" // Το όνομα πρέπει να ταιριάζει με το state
               checked={formData.enable_interview_reminders}
               onChange={handleChange}
               disabled={isLoading}
-              style={{ marginRight: '0.5rem', transform: 'scale(1.2)' }} // Slightly larger checkbox
+              style={{ marginRight: '0.75rem', transform: 'scale(1.3)' }} 
             />
-            <span>Ενεργοποίηση Υπενθυμίσεων για Συνεντεύξεις</span>
+            <span>Enable Interview Reminders</span>
           </label>
-          <small style={{ display: 'block', marginLeft: '1.7rem', color: 'var(--text-light-gray)'}}>
-            Ενεργοποιεί/απενεργοποιεί όλες τις υπενθυμίσεις για επερχόμενες συνεντεύξεις.
+          <small style={{ display: 'block', marginLeft: '2.2rem', color: 'var(--text-muted)'}}>
+            Enable/disable all reminders for upcoming interviews.
           </small>
         </div>
 
-        {/* Reminder Lead Time */}
-        <div style={{ marginBottom: '1.5rem', opacity: formData.enable_interview_reminders ? 1 : 0.5 }}> {/* Dim if disabled */}
-          <label htmlFor="reminder_lead_time_minutes" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
-            Υπενθύμιση Πριν από (λεπτά):
+        <div style={{ marginBottom: '1.5rem', opacity: formData.enable_interview_reminders ? 1 : 0.6 }}>
+          <label htmlFor="interview_reminder_lead_time_minutes" style={{ display: 'block', marginBottom: '0.5rem', fontWeight: '500' }}>
+            Reminder Lead Time (minutes):
           </label>
           <input
             type="number"
-            id="reminder_lead_time_minutes"
-            name="reminder_lead_time_minutes"
-            value={formData.reminder_lead_time_minutes}
+            id="interview_reminder_lead_time_minutes"
+            name="interview_reminder_lead_time_minutes" // Το όνομα πρέπει να ταιριάζει με το state
+            value={formData.interview_reminder_lead_time_minutes}
             onChange={handleChange}
-            disabled={isLoading || !formData.enable_interview_reminders} // Disable if main toggle is off
-            min="5" // Set min/max for browser validation hint
-            max="1440" // e.g., 1 day
+            disabled={isLoading || !formData.enable_interview_reminders} 
+            min="5" 
+            max="2880" 
             required
-            className="input-light-gray" // Use existing style from App.css
-            style={{ width: '100px' }} // Adjust width as needed
+            className="input-light-gray" // <<< ΕΦΑΡΜΟΓΗ ΚΛΑΣΗΣ
+            style={{ maxWidth: '150px' }} // Περιορισμός πλάτους για να μην είναι τεράστιο
           />
-          <small style={{ display: 'block', marginTop: '0.25rem', color: 'var(--text-light-gray)'}}>
-            Πόσα λεπτά πριν τη συνέντευξη θέλετε να λαμβάνετε υπενθύμιση (π.χ., 60).
+          <small style={{ display: 'block', marginTop: '0.25rem', color: 'var(--text-muted)'}}>
+            How many minutes before the interview you want to be reminded (e.g., 60).
           </small>
         </div>
+        
+        {/* Αν θέλεις να ξαναβάλεις το email reminder, θα πρέπει να υπάρχει και στο backend */}
+        {/* <div style={{ marginBottom: '1.5rem', opacity: formData.enable_interview_reminders ? 1 : 0.5 }}> ... </div> */}
 
-        {/* Email Reminders Checkbox */}
-        <div style={{ marginBottom: '1.5rem', opacity: formData.enable_interview_reminders ? 1 : 0.5 }}> {/* Dim if disabled */}
-          <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
-            <input
-              type="checkbox"
-              name="email_interview_reminders"
-              checked={formData.email_interview_reminders}
-              onChange={handleChange}
-              disabled={isLoading || !formData.enable_interview_reminders} // Disable if main toggle is off
-              style={{ marginRight: '0.5rem', transform: 'scale(1.2)' }}
-            />
-            <span>Αποστολή Υπενθύμισης και με Email</span>
-          </label>
-          <small style={{ display: 'block', marginLeft: '1.7rem', color: 'var(--text-light-gray)'}}>
-            Αν είναι ενεργοποιημένο, θα λαμβάνετε υπενθύμιση και στο email σας ({currentUser.email}).
-          </small>
-        </div>
-
-        {/* Submit Button */}
         <button
             type="submit"
             disabled={isLoading}
-            className="button-save button-action" // Use existing styles
-            style={{ minWidth: '120px' }} // Ensure minimum width
+            className="button-action button-primary" // Χρήση global κλάσης
+            style={{ minWidth: '150px', marginTop: '1rem' }} 
         >
-          {isLoading ? 'Αποθήκευση...' : 'Αποθήκευση Ρυθμίσεων'}
+          {isLoading ? 'Saving...' : 'Save Settings'}
         </button>
       </form>
     </div>

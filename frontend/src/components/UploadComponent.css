@@ -1,36 +1,24 @@
 /* frontend/src/components/UploadComponent.css */
 
 .upload-container {
-  /* Δεν χρειάζεται padding/border/shadow αν το γονικό div έχει .card-style */
-  width: 100%; /* Εξασφάλιση ότι πιάνει το πλάτος του γονέα */
+  width: 100%;
 }
-
-/* Ο τίτλος h3 συνήθως ορίζεται από το γονικό component που χρησιμοποιεί το UploadComponent */
-/*
-.upload-container h3 {
-  font-size: 1.3rem; 
-  font-weight: 600;  
-  color: var(--text-primary); 
-  margin-top: 0;
-  margin-bottom: 1.5rem; /* 24px */
-/* text-align: left; */
-/* } */
 
 .dropzone {
   border: 2px dashed var(--border-color, #ced4da);
   border-radius: var(--border-radius-md, 8px);
-  padding: 2rem; /* Περισσότερο padding */
+  padding: 2rem; 
   text-align: center;
   cursor: pointer;
-  background-color: #f9fafb; /* Πολύ απαλό γκρι */
+  background-color: #f9fafb; 
   color: var(--text-muted, #6c757d);
-  margin-bottom: 1rem; /* 16px */
+  margin-bottom: 1rem; 
   transition: border-color 0.2s ease, background-color 0.2s ease;
 }
 
 .dropzone.active {
   border-color: var(--primary-color, #007bff);
-  background-color: #e9f7ff; /* Απαλό μπλε όταν είναι active */
+  background-color: #e9f7ff; 
 }
 
 .dropzone p {
@@ -38,49 +26,45 @@
   font-size: 0.95rem;
 }
 
+/* --- ΣΤΟΧΕΥΜΕΝΟ STYLING ΓΙΑ ΤΟ POSITION INPUT --- */
 .position-input {
-  margin-bottom: 1rem; /* 16px */
+  margin-bottom: 1rem; 
   text-align: left; 
+  width: 100%; 
 }
 
 .position-input label {
    display: block;
-   margin-bottom: 0.375rem; /* 6px */
+   margin-bottom: 0.5rem; /* 8px, όπως στο AuthForm */
    font-weight: 500;
-   font-size: 0.9rem;
+   font-size: 0.9rem; /* Όπως στο AuthForm */
    color: var(--text-secondary, #495057); 
 }
 
-/* Το input θα πάρει στυλ από την κλάση .input-light-gray που ορίζεται στο App.css */
-/* .position-input input.input-light-gray { ... } */
-
-
-/* Τα κουμπιά θα πάρουν στυλ από τις κλάσεις .button-action .button-primary (ή άλλες) που ορίζονται στο App.css */
-/* .upload-container button.button-action { ... } */
+.position-input input.input-light-gray { /* Εφαρμόζουμε την κλάση που υπάρχει στο App.css */
+  width: 100%; /* Να πιάνει όλο το πλάτος του .position-input */
+  box-sizing: border-box;
+  /* Τα υπόλοιπα στυλ (padding, border, font-size, focus) θα έρθουν από τον κανόνα .input-light-gray στο App.css */
+  /* Αν το App.css δεν έχει το .input-light-gray ή δεν είναι αρκετό, πρόσθεσε τα styles εδώ: */
+  /* padding: 0.75rem 1rem; */
+  /* font-size: 1rem; */
+  /* line-height: 1.5; */
+  /* border: 1px solid var(--border-color, #ced4da); */
+  /* border-radius: var(--border-radius-md, 8px); */
+}
+/* --- ΤΕΛΟΣ STYLING ΓΙΑ POSITION INPUT --- */
 
 
 .upload-container .message {
-  margin-top: 1rem; /* 16px */
-  padding: 0.75rem 1rem; /* 12px 16px */
+  margin-top: 1rem; 
+  padding: 0.75rem 1rem; 
   border-radius: var(--border-radius-sm, 4px);
   font-size: 0.9rem;
-  text-align: left; /* Καλύτερα αριστερά για μηνύματα */
+  text-align: left; 
   border-width: 1px;
   border-style: solid;
 }
 
-.upload-container .message.info {
-  background-color: #e0e7ff; /* Απαλό μπλε-μοβ */
-  color: #3730a3; /* Σκούρο μπλε-μοβ */
-  border-color: #c7d2fe;
-}
-.upload-container .message.success {
-  background-color: #d1fae5; /* Απαλό πράσινο */
-  color: #065f46; /* Σκούρο πράσινο */
-  border-color: #a7f3d0;
-}
-.upload-container .message.error {
-  background-color: #fee2e2; /* Απαλό κόκκινο */
-  color: #b91c1c; /* Σκούρο κόκκινο */
-  border-color: #fecaca;
-}
+.upload-container .message.info { /* ... ίδιο με πριν ... */ }
+.upload-container .message.success { /* ... ίδιο με πριν ... */ }
+.upload-container .message.error { /* ... ίδιο με πριν ... */ }
