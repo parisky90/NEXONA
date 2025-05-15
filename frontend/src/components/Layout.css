@@ -1,10 +1,38 @@
-.layout-container {
+/* frontend/src/components/Layout.css */
+.app-container {
   display: flex;
+  flex-direction: column;
   min-height: 100vh;
+  background-color: #f8f9fa;
 }
 
-.main-content {
-  flex-grow: 1; /* Takes remaining space */
-  padding: 2rem;
-  overflow-y: auto; /* Allow scrolling if content overflows */
+.app-header {
+  background-color: #ffffff;
+  padding: 10px 25px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.08);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+}
+
+.app-logo {
+  height: 35px;
+  width: auto;
+}
+
+.main-layout-container {
+  display: flex;
+  flex-grow: 1;
+}
+
+.main-content-area {
+  flex-grow: 1;
+  padding: 25px;
+  overflow-y: auto;
+  background-color: #f8f9fa;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
 }

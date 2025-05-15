@@ -1,6 +1,6 @@
 // frontend/src/App.jsx
 import React, { useState, useEffect, createContext, useContext } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import './App.css';
 import apiClient from './api';
 import Layout from './components/Layout';
@@ -14,10 +14,21 @@ import CandidateListPage from './pages/CandidateListPage';
 import AdminLayout from './pages/AdminLayout';
 import AdminCompaniesPage from './pages/AdminCompaniesPage';
 import AdminUsersPage from './pages/AdminUsersPage';
-import CompanyUsersPage from './pages/CompanyUsersPage'; // <--- ΝΕΟ IMPORT
+import CompanyUsersPage from './pages/CompanyUsersPage';
 
 export const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
+
+const ProtectedRoute = ({ children, allowedRoles }) => {
+  const { currentUser } = useAuth();
+  if (!currentUser) {
+    return <Navigate to="/login" replace />;
+  }
+  if (allowedRoles && !allowedRoles.includes(currentUser.role)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+  return children ? children : <Outlet />;
+};
 
 function App() {
   const [currentUser, setCurrentUser] = useState(null);
@@ -35,7 +46,7 @@ function App() {
           setCurrentUser(null);
         }
       } catch (error) {
-        console.error("Session check failed:", error);
+        console.error("Session check failed:", error.response?.data || error.message);
         setCurrentUser(null);
       } finally {
         setIsLoadingAuth(false);
@@ -48,66 +59,60 @@ function App() {
     setCurrentUser(userData);
     console.log("User logged in:", userData);
   };
+
   const logout = async () => {
     try {
       await apiClient.post('/logout');
+    } catch (error) {
+      console.error("Logout API call failed:", error);
+    } finally {
       setCurrentUser(null);
       console.log("User logged out");
-    } catch (error) {
-      console.error("Logout failed:", error);
-      setCurrentUser(null);
     }
   };
 
   if (isLoadingAuth) {
-    return <div className="loading-placeholder">Initializing Application...</div>;
+    return <div className="loading-placeholder" style={{display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh'}}>Initializing Application...</div>;
   }
 
   return (
-    <AuthContext.Provider value={{ currentUser, login, logout }}>
+    <AuthContext.Provider value={{ currentUser, login, logout, setCurrentUser }}>
       <Router>
         <Routes>
-          {currentUser ? (
-            <>
-              <Route path="/" element={<Layout />}>
-                <Route index element={<Navigate to="/dashboard" replace />} />
-                <Route path="dashboard" element={<DashboardPage />} />
-                <Route path="candidate/:candidateId" element={<CandidateDetailPage />} />
-                <Route path="accepted" element={<CandidateListPage status="Accepted" />} />
-                <Route path="interested" element={<CandidateListPage status="Interested" />} />
-                <Route path="interview" element={<CandidateListPage status="Interview" />} />
-                <Route path="evaluation" element={<CandidateListPage status="Evaluation" />} />
-                <Route path="offer" element={<CandidateListPage status="OfferMade" />} />
-                <Route path="hired" element={<CandidateListPage status="Hired" />} />
-                <Route path="rejected" element={<CandidateListPage status="Rejected" />} />
-                <Route path="declined" element={<CandidateListPage status="Declined" />} />
-                <Route path="needs-review" element={<CandidateListPage status="NeedsReview" />} />
-                <Route path="processing" element={<CandidateListPage status="Processing" />} />
-                <Route path="settings" element={<SettingsPage />} />
-                {/* --- ΝΕΟ ROUTE ΓΙΑ COMPANY ADMIN --- */}
-                {currentUser.role === 'company_admin' && (
-                  <Route path="company/users" element={<CompanyUsersPage />} />
-                )}
-                {/* --------------------------------- */}
-              </Route>
-
-              {currentUser.role === 'superadmin' && ( // Εμφάνιση admin routes μόνο αν είναι superadmin
-                <Route path="/admin" element={<AdminLayout />}>
-                  <Route index element={<Navigate to="companies" replace />} />
-                  <Route path="companies" element={<AdminCompaniesPage />} />
-                  <Route path="users" element={<AdminUsersPage />} />
-                </Route>
-              )}
-              
-              <Route path="*" element={<Layout><NotFoundPage /></Layout>} />
-            </>
-          ) : (
-            <>
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/register" element={<RegisterPage />} />
-              <Route path="*" element={<Navigate to="/login" replace />} />
-            </>
-          )}
+          <Route path="/login" element={!currentUser ? <LoginPage /> : <Navigate to="/dashboard" replace />} />
+          <Route path="/register" element={!currentUser ? <RegisterPage /> : <Navigate to="/dashboard" replace />} />
+          <Route element={<ProtectedRoute />}>
+            <Route path="/" element={<Layout />}>
+              <Route index element={<Navigate to="/dashboard" replace />} />
+              <Route path="dashboard" element={<DashboardPage />} />
+              <Route path="candidate/:candidateId" element={<CandidateDetailPage />} />
+              <Route path="candidates/:status" element={<CandidateListPage />} />
+              {/* Η παρακάτω γραμμή είναι περιττή αν το /candidates/:status καλύπτει και το ParsingFailed */}
+              {/* <Route path="parsing-failed" element={<CandidateListPage status="ParsingFailed" />} /> */}
+              <Route path="settings" element={<SettingsPage />} />
+              <Route
+                path="company/users"
+                element={
+                  <ProtectedRoute allowedRoles={['company_admin', 'superadmin']}>
+                    <CompanyUsersPage />
+                  </ProtectedRoute>
+                }
+              />
+            </Route>
+            <Route
+              path="/admin"
+              element={
+                <ProtectedRoute allowedRoles={['superadmin']}>
+                  <AdminLayout />
+                </ProtectedRoute>
+              }
+            >
+              <Route index element={<Navigate to="companies" replace />} />
+              <Route path="companies" element={<AdminCompaniesPage />} />
+              <Route path="users" element={<AdminUsersPage />} />
+            </Route>
+          </Route>
+          <Route path="*" element={currentUser ? <Layout><NotFoundPage /></Layout> : <NotFoundPage />} />
         </Routes>
       </Router>
     </AuthContext.Provider>

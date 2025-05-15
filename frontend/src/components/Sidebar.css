@@ -1,98 +1,96 @@
 /* frontend/src/components/Sidebar.css */
-/* v5 - Added Logo Styling */
-
 .sidebar {
-  width: 240px;
-  flex-shrink: 0;
-  background-color: var(--sidebar-bg);
-  color: var(--text-black);
-  height: 100vh;
-  position: sticky;
-  top: 0;
+  width: 250px; 
+  background-color: #ffffff;
+  padding-top: 0;
+  box-shadow: 2px 0 5px rgba(0,0,0,0.05);
   display: flex;
-  flex-direction: column; /* Stack logo and nav */
-  border-right: 1px solid var(--border-color);
-  overflow-y: auto;
+  flex-direction: column;
+  flex-shrink: 0;
+  border-right: 1px solid #e9ecef;
 }
 
-/* --- Logo Styles --- */
-.sidebar-logo-container {
-    padding: 20px 15px; /* Padding around the logo */
-    text-align: center; /* Center the logo */
-    border-bottom: 1px solid var(--border-color); /* Line below logo */
-    margin-bottom: 10px; /* Space below logo area */
+.sidebar-user-info {
+  padding: 15px 20px;
+  border-bottom: 1px solid #e9ecef;
+  margin-bottom: 10px;
 }
 
-.sidebar-logo {
-    max-width: 80%; /* Adjust size as needed */
-    height: auto; /* Maintain aspect ratio */
-    display: inline-block; /* Needed for text-align center */
-}
-/* --- End Logo Styles --- */
-
-
-.sidebar nav {
-  flex-grow: 1;
-  padding: 0; /* Remove padding from nav if logo container has it */
+.sidebar-user-info .user-role-display {
+  font-weight: 600;
+  color: #343a40;
+  margin-bottom: 3px;
+  font-size: 0.9rem;
 }
 
-.sidebar ul {
+.sidebar-user-info .company-name-display {
+  font-size: 0.8rem;
+  color: #6c757d;
+}
+
+.sidebar-nav {
   list-style: none;
   padding: 0;
   margin: 0;
+  flex-grow: 1;
+  overflow-y: auto;
 }
 
-.sidebar ul li {
-  margin: 0 10px; /* Horizontal margin for list items */
-}
-
-/* Styling for BOTH NavLink (<a>) and logout <button> */
-.sidebar ul li a,
-.sidebar ul li button.logout-button {
+.sidebar-link {
   display: flex;
   align-items: center;
-  padding: 10px 15px;
-  color: var(--text-black);
+  padding: 10px 20px;
+  color: #495057;
   text-decoration: none;
+  font-size: 0.875rem;
+  transition: background-color 0.2s ease, color 0.2s ease;
+  border-left: 3px solid transparent;
+}
+
+.sidebar-link:hover {
+  background-color: #f8f9fa;
+  color: #007bff;
+}
+
+.sidebar-link.active-link {
+  background-color: #e9ecef;
+  color: #0056b3;
+  font-weight: 500;
+  border-left-color: #007bff;
+}
+
+.sidebar-link .sidebar-icon { /* Στόχευση της κλάσης που δώσαμε στα icons */
+  width: 18px;
+  height: 18px;
+  margin-right: 10px;
+  flex-shrink: 0;
+  color: #6c757d; 
+}
+
+.sidebar-link.active-link .sidebar-icon {
+  color: #0056b3; 
+}
+
+.sidebar-link .icon-hired { 
+    color: #16a34a; 
+}
+.sidebar-link.active-link .icon-hired { 
+    color: #16a34a;
+}
+
+.sidebar-section-title {
+  padding: 12px 20px 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: #868e96;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.logout-button {
   background: none;
   border: none;
-  cursor: pointer;
-  font-size: 0.9rem;
-  font-weight: 500;
   text-align: left;
+  cursor: pointer;
   width: 100%;
-  box-sizing: border-box;
-  transition: background-color 0.15s ease, color 0.15s ease;
-  border-radius: 5px;
-  margin-bottom: 4px;
-}
-
-/* Hover state for BOTH link and button */
-.sidebar ul li a:hover,
-.sidebar ul li button.logout-button:hover {
-  background-color: var(--sidebar-hover-bg); /* Light green */
-  color: var(--text-black);
-}
-
-/* Active link state (for NavLink) */
-.sidebar ul li a.active-link {
-  background-color: var(--sidebar-active-bg); /* Light blue */
-  color: var(--text-black);
-  font-weight: 600;
-}
-.sidebar ul li a.active-link:hover {
-  background-color: var(--sidebar-active-bg);
-  color: var(--text-black);
-}
-
-
-/* Separator styling */
-.sidebar ul li.separator {
-  margin: 15px 0;
-  padding: 0 10px;
-}
-.sidebar ul li.separator hr {
-  border: none;
-  border-top: 1px solid var(--border-color);
-  margin: 0;
 }

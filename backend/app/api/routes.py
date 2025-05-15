@@ -3,19 +3,17 @@
 from flask import Blueprint, request, jsonify, current_app
 from werkzeug.utils import secure_filename
 import uuid
-from datetime import datetime, timezone  # Βεβαιώσου ότι το timezone είναι το σωστό (datetime.timezone)
+from datetime import datetime, timezone as dt_timezone
 from dateutil import parser as dateutil_parser
 from flask_login import login_user, logout_user, current_user, login_required
-from app import db, celery  # Βεβαιώσου ότι το celery import είναι σωστό αν το χρησιμοποιείς εδώ
+from app import db, celery
 from app.models import User, Candidate, Position, Company, CompanySettings
-from sqlalchemy.orm.attributes import flag_modified
-from sqlalchemy import func, case, or_
-from app.services import s3_service  # Βεβαιώσου ότι αυτό το service υπάρχει και είναι προσβάσιμο
+from sqlalchemy.orm.attributes import flag_modified  # Αυτό χρησιμοποιείται στο PUT του handle_candidate
+from sqlalchemy import func, case, or_, extract  # <--- ΕΔΩ ΕΙΝΑΙ Η ΔΙΟΡΘΩΣΗ ΜΕ ΤΟ EXTRACT
+from app.services import s3_service
+print("ROUTES.PY LOADED WITH EXTRACT")
 
-# --- ΚΥΡΙΑ ΑΛΛΑΓΗ ΟΝΟΜΑΤΟΣ BLUEPRINT ---
 bp = Blueprint('api', __name__)
-# --- ΤΕΛΟΣ ΚΥΡΙΑΣ ΑΛΛΑΓΗΣ ---
-
 
 ALLOWED_EXTENSIONS = {'pdf', 'docx'}
 
@@ -27,95 +25,74 @@ def get_current_user_company_id():
     if not current_user.is_authenticated:
         return None
     if current_user.role == 'superadmin':
-        # Superadmin might operate across companies or without specific company context for some actions
-        return None  # Or handle based on specific endpoint logic if a company_id is passed for superadmin
+        # Superadmin might operate on any company, so they might not have a single company_id context here
+        # Or they might select a company to operate on from the UI.
+        # For now, if routes need a company_id for superadmin, it should be passed as a param.
+        return None  # Or handle specific logic if superadmin needs a default company context
     if not current_user.company_id:
         current_app.logger.error(
             f"User {current_user.id} ({current_user.username}) with role {current_user.role} has no company_id.")
-        return None  # Or raise an exception / return error response
+        return None
     return current_user.company_id
 
 
-@bp.route('/register', methods=['POST'])  # Άλλαξε από api_bp σε bp
+# --- Login/Register/Session Routes ---
+@bp.route('/register', methods=['POST'])
 def register():
     data = request.get_json()
     if not data: return jsonify({"error": "Request must be JSON"}), 400
     username = data.get('username')
     email = data.get('email')
     password = data.get('password')
+
     if not username or not email or not password:
         return jsonify({"error": "Username, email, and password are required"}), 400
     if len(password) < 8:
         return jsonify({"error": "Password must be at least 8 characters long"}), 400
+
     if User.query.filter_by(username=username).first():
         return jsonify({"error": "Username already exists"}), 409
     if User.query.filter_by(email=email).first():
         return jsonify({"error": "Email address already registered"}), 409
-    new_user = User(
-        username=username, email=email, role='user', is_active=False  # Default is_active to False
-        # enable_email_interview_reminders και interview_reminder_lead_time_minutes θα πάρουν defaults από το model
-    )
+
+    new_user = User(username=username, email=email, role='user', is_active=False)  # Default role and inactive
     new_user.set_password(password)
     try:
         db.session.add(new_user)
         db.session.commit()
         current_app.logger.info(f"New user registered: {username} ({email}). Awaiting activation/assignment.")
-        # Consider sending a confirmation email or notifying admin
-        # celery.send_task('app.tasks.communication_tasks.send_account_confirmation_email', args=[new_user.id])
+        # Consider sending a notification email to admin for activation
         return jsonify({
-                           "message": "Registration successful. Account activation and company assignment pending administrator review."}), 201
+            "message": "Registration successful. Account activation and company assignment pending administrator review."}), 201
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error during user registration for {username}: {e}", exc_info=True)
         return jsonify({"error": "Registration failed due to an internal error."}), 500
 
 
-@bp.route('/login', methods=['POST'])  # Άλλαξε από api_bp σε bp
+@bp.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
-    if not data or not data.get('login_identifier') or not data.get('password'):
-        return jsonify({"error": "Login identifier and password required"}), 400
-    login_identifier = data.get('login_identifier')
+    if not data: return jsonify({"error": "Invalid JSON format"}), 400
+    login_identifier = data.get('login_identifier')  # Can be username or email
     password = data.get('password')
-    remember = data.get('remember', False)  # Default to False if not provided
+    if not login_identifier or not password:
+        return jsonify({"error": "Login identifier and password required"}), 400
+    remember = data.get('remember', False)
     user = User.query.filter((User.username == login_identifier) | (User.email == login_identifier)).first()
     if user and user.check_password(password):
         if not user.is_active:
-            current_app.logger.warning(f"Login attempt by inactive user: {login_identifier}")
             return jsonify({"error": "Account not active. Please check your email or contact an administrator."}), 403
-        if user.role != 'superadmin' and not user.company_id:
-            current_app.logger.warning(
-                f"Login attempt by user {user.username} (Role: {user.role}) not assigned to any company.")
+        if user.role != 'superadmin' and not user.company_id:  # Regular users must be assigned to a company
             return jsonify({"error": "Account not yet assigned to a company by an administrator."}), 403
-
         login_user(user, remember=remember)
+        user_data = user.to_dict(include_company_info=True)  # Fetch company info including settings
         current_app.logger.info(f"User {user.username} (Role: {user.role}, CompanyID: {user.company_id}) logged in.")
-
-        user_data = user.to_dict(include_company_info=True)  # Χρησιμοποιούμε το to_dict από το model
-
-        # Προσθήκη company settings αν ο χρήστης ανήκει σε εταιρεία (όχι superadmin)
-        if user.company_id and user.role != 'superadmin':
-            company_settings = CompanySettings.query.filter_by(company_id=user.company_id).first()
-            if company_settings:
-                user_data["company_settings"] = {
-                    "rejection_email_template": company_settings.rejection_email_template,
-                    # "reminder_email_template": company_settings.reminder_email_template, # Αν υπάρχει τέτοιο πεδίο
-                    "interview_invitation_email_template": company_settings.interview_invitation_email_template,
-                    "default_interview_reminder_timing_minutes": company_settings.default_interview_reminder_timing_minutes,
-                    "enable_reminders_feature_for_company": company_settings.enable_reminders_feature_for_company
-                }
-            else:
-                user_data["company_settings"] = None  # Ή ένα κενό dict
-                current_app.logger.warning(
-                    f"No CompanySettings found for company_id {user.company_id} during login for user {user.username}")
-
         return jsonify({"message": "Login successful", "user": user_data}), 200
-    else:
-        current_app.logger.warning(f"Failed login attempt for: {login_identifier}")
-        return jsonify({"error": "Invalid login identifier or password"}), 401
+    return jsonify({"error": "Invalid login identifier or password"}), 401
 
 
-@bp.route('/logout', methods=['POST'])  # Άλλαξε από api_bp σε bp
+@bp.route('/logout', methods=['POST'])
 @login_required
 def logout():
     user_id_log = current_user.id
@@ -125,34 +102,23 @@ def logout():
     return jsonify({"message": "Logout successful"}), 200
 
 
-@bp.route('/session', methods=['GET'])  # Άλλαξε από api_bp σε bp
+@bp.route('/session', methods=['GET'])
 def check_session():
     if current_user.is_authenticated:
-        user_data = current_user.to_dict(include_company_info=True)  # Χρησιμοποιούμε το to_dict
-
-        if current_user.company_id and current_user.role != 'superadmin':
-            company_settings = CompanySettings.query.filter_by(company_id=current_user.company_id).first()
-            if company_settings:
-                user_data["company_settings"] = {  # Προσθέτουμε μόνο ό,τι χρειάζεται ο client για το session check
-                    "default_interview_reminder_timing_minutes": company_settings.default_interview_reminder_timing_minutes,
-                    "enable_reminders_feature_for_company": company_settings.enable_reminders_feature_for_company
-                }
+        user_data = current_user.to_dict(include_company_info=True)
         return jsonify({"authenticated": True, "user": user_data}), 200
-    else:
-        return jsonify({"authenticated": False}), 200
+    return jsonify({"authenticated": False}), 200
 
 
-@bp.route('/upload', methods=['POST'])  # Άλλαξε από api_bp σε bp
+# --- Upload Route ---
+@bp.route('/upload', methods=['POST'])
 @login_required
 def upload_cv():
     current_app.logger.info(f"--- Upload Request Received by User ID: {current_user.id} ({current_user.username}) ---")
-
-    user_company_id_for_context = get_current_user_company_id()  # Παίρνει το company_id του χρήστη ή None για superadmin
-
+    user_company_id_for_context = get_current_user_company_id()
     target_company_id_for_candidate = None
 
     if current_user.role == 'superadmin':
-        # Ο superadmin ΠΡΕΠΕΙ να ορίσει company_id για τον υποψήφιο
         target_company_id_from_form = request.form.get('company_id_for_upload', type=int)
         if not target_company_id_from_form:
             return jsonify({"error": "Superadmin must specify a target company_id for the candidate."}), 400
@@ -163,117 +129,112 @@ def upload_cv():
     elif user_company_id_for_context:
         target_company_id_for_candidate = user_company_id_for_context
     else:
-        # Αυτό δεν θα έπρεπε να συμβεί αν το get_current_user_company_id() και το @login_required δουλεύουν σωστά
+        # This case should ideally not be reached if login logic ensures company_id for non-superadmins
         return jsonify({"error": "User not associated with a company or unauthorized."}), 403
 
-    if 'cv_file' not in request.files: return jsonify({"error": "No file part named 'cv_file'"}), 400
+    if 'cv_file' not in request.files:
+        return jsonify({"error": "No file part named 'cv_file'"}), 400
     file = request.files['cv_file']
-    position_name_from_form = request.form.get('position', None)  # Όνομα θέσης από τη φόρμα
+    position_name_from_form = request.form.get('position', None)
 
-    if file.filename == '': return jsonify({"error": "No selected file"}), 400
-    if not allowed_file(file.filename): return jsonify({"error": "Invalid file type. Allowed: pdf, docx"}), 400
+    if file.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+    if not allowed_file(file.filename):
+        return jsonify({"error": f"Invalid file type. Allowed: {', '.join(ALLOWED_EXTENSIONS)}"}), 400
 
-    uploaded_s3_key = None  # Για cleanup σε περίπτωση σφάλματος
+    uploaded_s3_key = None
     try:
         file_ext = file.filename.rsplit('.', 1)[1].lower()
         original_filename = secure_filename(file.filename)
-        # Δημιουργία μοναδικού κλειδιού S3
+        # Ensure S3 key is unique and organized
         s3_key = f"company_{target_company_id_for_candidate}/cvs/{uuid.uuid4()}.{file_ext}"
 
-        file.seek(0)  # Επαναφορά του pointer του αρχείου στην αρχή
+        file.seek(0)  # Ensure file pointer is at the beginning
         uploaded_s3_key = s3_service.upload_file(file, s3_key)
         if not uploaded_s3_key:
-            raise Exception("S3 upload service indicated failure. Check S3 service logs.")
+            # s3_service.upload_file should raise an exception on failure, but double check
+            raise Exception("S3 upload service indicated failure without raising an exception.")
 
+        # Create placeholder candidate
         new_candidate = Candidate(
             cv_original_filename=original_filename,
-            cv_storage_path=uploaded_s3_key,  # Το κλειδί που επέστρεψε το S3
-            current_status='Processing',  # Αρχικό status
-            confirmation_uuid=str(uuid.uuid4()),  # Για μελλοντικές επιβεβαιώσεις
+            cv_storage_path=uploaded_s3_key,
+            current_status='Processing',  # Initial status
+            confirmation_uuid=uuid.uuid4(),  # Generate UUID object directly
             company_id=target_company_id_for_candidate
-            # Άλλα πεδία θα συμπληρωθούν από το parsing ή αργότερα
         )
 
-        # Σύνδεση με Position αν δόθηκε όνομα
         if position_name_from_form and position_name_from_form.strip():
             pos_name_cleaned = position_name_from_form.strip()
-            # Βρες ή δημιούργησε τη θέση για την συγκεκριμένη εταιρεία
+            # Case-insensitive search for position
             position = Position.query.filter(
                 func.lower(Position.position_name) == func.lower(pos_name_cleaned),
                 Position.company_id == target_company_id_for_candidate
             ).first()
-            if not position:
-                position = Position(position_name=pos_name_cleaned, company_id=target_company_id_for_candidate)
-                db.session.add(position)  # Πρόσθεσε το position στο session για να πάρει ID αν είναι νέο
-                # Δεν κάνουμε commit εδώ, θα γίνει μαζί με τον candidate
+            if not position:  # Create position if it doesn't exist for the company
+                position = Position(position_name=pos_name_cleaned,  # Use cleaned name, or original if preferred
+                                    company_id=target_company_id_for_candidate,
+                                    status='Open')  # Default status for new positions
+                db.session.add(position)
+                # No commit here, will be committed with candidate
             new_candidate.positions.append(position)
 
         db.session.add(new_candidate)
-        db.session.commit()  # Commit για να πάρουμε το candidate_id
+        db.session.commit()  # Commit placeholder candidate and potentially new position
+        candidate_id_for_task = str(new_candidate.candidate_id)  # Pass ID as string to Celery
 
-        candidate_id_for_task = new_candidate.candidate_id  # Το ID που δημιουργήθηκε (string UUID)
-
-        # Εκκίνηση του Celery task για parsing
-        # Βεβαιώσου ότι το όνομα του task είναι σωστό και το task περιμένει αυτά τα arguments
         celery.send_task('tasks.parsing.parse_cv_task',
                          args=[candidate_id_for_task, uploaded_s3_key, target_company_id_for_candidate])
         current_app.logger.info(
-            f"CV uploaded (S3 Key: {uploaded_s3_key}), Candidate ID: {candidate_id_for_task} created for Company {target_company_id_for_candidate}. Parsing task queued.")
-
-        return jsonify(new_candidate.to_dict()), 201
+            f"CV uploaded (S3 Key: {uploaded_s3_key}), Placeholder Candidate ID: {candidate_id_for_task} created for Company {target_company_id_for_candidate}. Parsing task queued.")
+        return jsonify(new_candidate.to_dict()), 201  # Return created candidate
 
     except Exception as e:
-        db.session.rollback()
+        db.session.rollback()  # Rollback any partial DB changes
         current_app.logger.error(
-            f"Overall Upload Error (User: {current_user.id}, TargetCompany: {target_company_id_for_candidate}) during upload: {e}",
+            f"Upload Error (User: {current_user.id}, TargetCompany: {target_company_id_for_candidate}): {e}",
             exc_info=True)
-        # Προσπάθεια διαγραφής του αρχείου από το S3 αν το upload είχε γίνει αλλά κάτι άλλο απέτυχε
-        if uploaded_s3_key:
+        if uploaded_s3_key:  # If S3 upload succeeded but something else failed, try to delete the S3 object
             try:
                 s3_service.delete_file(uploaded_s3_key)
-                current_app.logger.info(f"S3 cleanup successful for key {uploaded_s3_key} after upload error.")
+                current_app.logger.info(f"S3 file {uploaded_s3_key} deleted due to subsequent error.")
             except Exception as s3_del_err:
                 current_app.logger.error(
                     f"S3 cleanup FAILED for key {uploaded_s3_key} after upload error: {s3_del_err}")
         return jsonify({"error": "Internal server error during CV upload."}), 500
 
 
-@bp.route('/dashboard/summary', methods=['GET'])  # Άλλαξε από api_bp σε bp
+# --- Dashboard Routes ---
+@bp.route('/dashboard/summary', methods=['GET'])
 @login_required
 def get_dashboard_summary():
     user_company_id_context = get_current_user_company_id()
     query_target_company_id = None
 
     if current_user.role == 'superadmin':
-        # Ο superadmin μπορεί να φιλτράρει ανά company_id αν δοθεί, αλλιώς βλέπει όλα
         company_id_filter_param = request.args.get('company_id', type=int)
         if company_id_filter_param:
             query_target_company_id = company_id_filter_param
+        # If superadmin and no company_id_filter_param, summary will be for all companies
     elif user_company_id_context:
         query_target_company_id = user_company_id_context
-    else:
-        # Αυτό καλύπτει χρήστες (όχι superadmin) χωρίς company_id, που δεν θα έπρεπε να έχουν πρόσβαση
-        return jsonify({"error": "User not associated with a company or unauthorized."}), 403
+    else:  # Should not happen for authenticated non-superadmin if login logic is correct
+        return jsonify({"error": "User not associated with a company or not authorized."}), 403
 
     try:
-        # Ορίζουμε τα statuses που μας ενδιαφέρουν για το summary
-        # Αυτά πρέπει να ταιριάζουν με τα πιθανά Candidate.current_status
+        # Define all statuses you want to count
         relevant_statuses = [
-            'New', 'Processing', 'NeedsReview', 'Interview', 'OfferMade',
-            'Hired', 'Rejected', 'ParsingFailed', 'Accepted', 'Declined',
-            'Interested', 'Evaluation', 'On Hold'  # Πρόσθεσε ό,τι άλλο χρησιμοποιείς
+            'New', 'Processing', 'NeedsReview', 'Interview', 'OfferMade', 'Hired',
+            'Rejected', 'ParsingFailed', 'Accepted', 'Declined', 'Interested',
+            'Evaluation', 'On Hold'
         ]
-
+        # Create case statements for each status to count them
         status_aggregations = [
-            func.sum(case((Candidate.current_status == status, 1), else_=0)).label(status.replace(" ", "_"))
-            # Χρησιμοποίησε underscores για τα labels
+            func.sum(case((Candidate.current_status == status, 1), else_=0)).label(
+                status.replace(" ", "_").replace("-", "_"))
             for status in relevant_statuses
         ]
-
-        query_obj = db.session.query(
-            func.count(Candidate.candidate_id).label("total_candidates"),  # Άλλαξα το label για σαφήνεια
-            *status_aggregations
-        )
+        query_obj = db.session.query(func.count(Candidate.candidate_id).label("total_candidates"), *status_aggregations)
 
         if query_target_company_id:
             query_obj = query_obj.filter(Candidate.company_id == query_target_company_id)
@@ -281,12 +242,12 @@ def get_dashboard_summary():
         q_result = query_obj.first()
 
         summary = {"total_candidates": 0}
+        # Initialize all status counts to 0
         for status in relevant_statuses:
-            summary[status.replace(" ", "_")] = 0  # Αρχικοποίηση όλων των status με 0
+            summary[status.replace(" ", "_").replace("-", "_")] = 0
 
         if q_result:
-            summary.update(
-                {k: (v or 0) for k, v in q_result._asdict().items()})  # Ενημέρωση με τα αποτελέσματα του query
+            summary.update({k: (v or 0) for k, v in q_result._asdict().items()})  # Use _asdict() for Row objects
 
         return jsonify(summary), 200
     except Exception as e:
@@ -296,19 +257,9 @@ def get_dashboard_summary():
         return jsonify({"error": "Failed to retrieve dashboard summary."}), 500
 
 
-@bp.route('/candidates/<string:status_param>', methods=['GET'])  # Άλλαξε από api_bp σε bp, και το όνομα της παραμέτρου
+@bp.route('/dashboard/statistics', methods=['GET'])
 @login_required
-def get_candidates_by_status(status_param):  # Η παράμετρος ταιριάζει με το URL
-    # Εδώ μπορείς να έχεις μια λίστα με τα "valid" statuses ή να επιτρέπεις "All"
-    valid_statuses_for_filter = [
-        'New', 'Processing', 'NeedsReview', 'Interview', 'OfferMade',
-        'Hired', 'Rejected', 'ParsingFailed', 'Accepted', 'Declined',
-        'Interested', 'Evaluation', 'On Hold', 'All'  # Το 'All' είναι ειδική περίπτωση
-    ]
-    if status_param not in valid_statuses_for_filter:
-        return jsonify(
-            {"error": f"Invalid status filter: {status_param}. Valid are: {', '.join(valid_statuses_for_filter)}"}), 400
-
+def get_dashboard_statistics():
     user_company_id_context = get_current_user_company_id()
     query_target_company_id = None
 
@@ -319,256 +270,445 @@ def get_candidates_by_status(status_param):  # Η παράμετρος ταιρ�
     elif user_company_id_context:
         query_target_company_id = user_company_id_context
     else:
+        return jsonify({"error": "User not associated with a company or not authorized."}), 403
+
+    stats = {}
+    try:
+        base_query_candidate = Candidate.query
+        base_query_position = Position.query
+
+        if query_target_company_id:
+            base_query_candidate = base_query_candidate.filter(Candidate.company_id == query_target_company_id)
+            base_query_position = base_query_position.filter(Position.company_id == query_target_company_id)
+
+        total_candidates_for_company = base_query_candidate.count()
+
+        reached_interview_statuses = ['Interview', 'Evaluation', 'OfferMade', 'Hired']
+        reached_interview_count = base_query_candidate.filter(
+            Candidate.current_status.in_(reached_interview_statuses)
+        ).count()
+
+        stats['interview_reach_percentage'] = round(
+            (reached_interview_count / total_candidates_for_company) * 100, 1
+        ) if total_candidates_for_company > 0 else 0
+
+        # Calculate average time to interview
+        avg_time_subquery = db.session.query(
+            func.avg(
+                extract('epoch', Candidate.interview_datetime) - extract('epoch', Candidate.submission_date)
+            ).label('avg_duration_seconds')
+        ).filter(
+            Candidate.submission_date.isnot(None),
+            Candidate.interview_datetime.isnot(None),
+            Candidate.interview_datetime > Candidate.submission_date,  # Ensure interview is after submission
+            Candidate.current_status.in_(['Interview', 'Evaluation', 'OfferMade', 'Hired'])
+            # Consider only relevant candidates
+        )
+        if query_target_company_id:
+            avg_time_subquery = avg_time_subquery.filter(Candidate.company_id == query_target_company_id)
+
+        avg_result = avg_time_subquery.first()
+        stats['avg_days_to_interview'] = round(
+            avg_result.avg_duration_seconds / (60 * 60 * 24), 1
+        ) if avg_result and avg_result.avg_duration_seconds is not None and avg_result.avg_duration_seconds >= 0 else "N/A"
+
+        stats['open_positions_count'] = base_query_position.filter(Position.status == 'Open').count()
+
+        return jsonify(stats), 200
+    except Exception as e:
+        current_app.logger.error(
+            f"Dashboard Statistics Error (User: {current_user.id}, Company Filter: {query_target_company_id}): {e}",
+            exc_info=True)
+        return jsonify({"error": "Failed to retrieve dashboard statistics."}), 500
+
+
+# --- Candidate List Route ---
+@bp.route('/candidates/<string:status_param>', methods=['GET'])
+@login_required
+def get_candidates_by_status(status_param):
+    valid_statuses = [
+        'New', 'Processing', 'NeedsReview', 'Interview', 'OfferMade', 'Hired',
+        'Rejected', 'ParsingFailed', 'Accepted', 'Declined', 'Interested',
+        'Evaluation', 'On Hold', 'All'
+    ]
+    if status_param not in valid_statuses:
+        return jsonify({"error": f"Invalid status filter: {status_param}."}), 400
+
+    user_company_id_context = get_current_user_company_id()
+    query_target_company_id = None
+    if current_user.role == 'superadmin':
+        company_id_filter_param = request.args.get('company_id', type=int)
+        if company_id_filter_param:
+            query_target_company_id = company_id_filter_param
+    elif user_company_id_context:
+        query_target_company_id = user_company_id_context
+    else:
         return jsonify({"error": "User not associated with a company or unauthorized."}), 403
 
     try:
-        candidates_query_obj = Candidate.query
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 15, type=int)
+
+        query_obj = Candidate.query
         if query_target_company_id:
-            candidates_query_obj = candidates_query_obj.filter(Candidate.company_id == query_target_company_id)
+            query_obj = query_obj.filter(Candidate.company_id == query_target_company_id)
 
         if status_param != 'All':
-            candidates_query_obj = candidates_query_obj.filter(Candidate.current_status == status_param)
+            query_obj = query_obj.filter(Candidate.current_status == status_param)
 
-        # Ταξινόμηση (π.χ., βάσει ημερομηνίας υποβολής)
-        candidates_result = candidates_query_obj.order_by(Candidate.submission_date.desc()).all()
+        # Order by submission_date descending, with nulls last (e.g., for placeholders not yet parsed)
+        pagination = query_obj.order_by(Candidate.submission_date.desc().nullslast()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
 
-        # Επιστροφή λίστας υποψηφίων (με presigned URL για το CV αν χρειάζεται)
         candidates_data = []
-        for cand in candidates_result:
-            cv_url_val = None
-            if cand.cv_storage_path:
-                try:
-                    cv_url_val = s3_service.generate_presigned_url(cand.cv_storage_path)  # Default expiration
-                except Exception as s3_e:
-                    current_app.logger.error(
-                        f"Failed to generate presigned URL for candidate {cand.candidate_id} in list: {s3_e}")
+        for cand in pagination.items:
+            cv_url_val = s3_service.generate_presigned_url(cand.cv_storage_path) if cand.cv_storage_path else None
             candidates_data.append(cand.to_dict(include_cv_url=True, cv_url=cv_url_val))
 
-        return jsonify(candidates_data), 200
+        return jsonify({
+            "candidates": candidates_data,
+            "total_results": pagination.total,
+            "current_page": pagination.page,
+            "per_page": pagination.per_page,
+            "total_pages": pagination.pages
+        }), 200
     except Exception as e:
         current_app.logger.error(
-            f"Error listing candidates (Status: {status_param}, User: {current_user.id}, Company Filter: {query_target_company_id}): {e}",
+            f"Error listing candidates (Status: {status_param}, User: {current_user.id}, Company: {query_target_company_id}): {e}",
             exc_info=True)
         return jsonify({"error": "Failed to retrieve candidate list."}), 500
 
 
-@bp.route('/candidate/<string:candidate_id_url>',
-          methods=['GET', 'PUT', 'DELETE'])  # Άλλαξε από api_bp σε bp, και το όνομα της παραμέτρου
+# --- Candidate Detail, Update, Delete ---
+@bp.route('/candidate/<string:candidate_id_url>', methods=['GET', 'PUT', 'DELETE'])
 @login_required
-def handle_candidate(candidate_id_url):  # Η παράμετρος ταιριάζει με το URL
-    user_company_id_context = get_current_user_company_id()
+def handle_candidate(candidate_id_url):
+    try:
+        candidate_uuid = uuid.UUID(candidate_id_url)  # Validate UUID format
+    except ValueError:
+        return jsonify({"error": "Invalid candidate ID format."}), 400
 
-    candidate = Candidate.query.get_or_404(candidate_id_url,
+    candidate = Candidate.query.get_or_404(candidate_uuid,
                                            description=f"Candidate with ID {candidate_id_url} not found.")
+    user_company_id_context = get_current_user_company_id()
+    user_id_for_logs = current_user.id
+    user_username_for_logs = current_user.username
 
-    # Έλεγχos δικαιωμάτων: Ο χρήστης πρέπει να είναι superadmin ή να ανήκει στην ίδια εταιρεία με τον υποψήφιο
+    # Authorization check
     if current_user.role != 'superadmin':
         if not user_company_id_context or candidate.company_id != user_company_id_context:
             current_app.logger.warning(
-                f"Access denied for user {current_user.id} to candidate {candidate.candidate_id} of company {candidate.company_id}")
+                f"Access denied for user {user_id_for_logs} (Company: {user_company_id_context}) to candidate {candidate.candidate_id} (Company: {candidate.company_id})")
             return jsonify({"error": "Access denied to this candidate."}), 403
-
-    user_id_for_logs = current_user.id  # Για logging
 
     if request.method == 'GET':
         try:
             cv_url_val = None
             if candidate.cv_storage_path:
-                cv_url_val = s3_service.generate_presigned_url(candidate.cv_storage_path, expiration=900)  # 15 λεπτά
+                cv_url_val = s3_service.generate_presigned_url(candidate.cv_storage_path, expiration=900)  # 15 minutes
             return jsonify(candidate.to_dict(include_cv_url=True, cv_url=cv_url_val)), 200
         except Exception as e:
             current_app.logger.error(f"GET Candidate {candidate.candidate_id} Error: {e}", exc_info=True)
             return jsonify({"error": "Failed to retrieve candidate details."}), 500
 
     elif request.method == 'PUT':
-        current_app.logger.info(f"PUT Candidate {candidate.candidate_id} by User {user_id_for_logs}")
+        current_app.logger.info(
+            f"PUT Candidate {candidate.candidate_id} by User {user_id_for_logs} ({user_username_for_logs}). Payload (first 500 chars): {str(request.data)[:500]}")
         data = request.get_json()
-        if not data: return jsonify({"error": "No input data provided. Request body must be JSON."}), 400
+        if not data:
+            return jsonify({"error": "No input data provided. Request body must be JSON."}), 400
 
-        allowed_updates = [
-            'first_name', 'last_name', 'age', 'phone_number', 'email',
-            'current_status', 'notes',
-            'education_summary', 'experience_summary', 'skills_summary',  # Χρησιμοποιούμε τα νέα ονόματα
-            'languages', 'seminars',
-            'interview_datetime', 'interview_location', 'interview_type', 'interviewers',
-            'evaluation_rating', 'offers', 'candidate_confirmation_status'
-        ]
-        updated_fields_tracker = False  # Για να δούμε αν έγινε κάποια αλλαγή
+        updated_fields_tracker = False
         original_status = candidate.current_status
-        original_interview_time = candidate.interview_datetime
+        original_interview_time = candidate.interview_datetime  # Store before any changes
         interview_time_changed_flag = False
 
-        for key, value in data.items():
-            if key in allowed_updates:
-                current_value_on_candidate = getattr(candidate, key)
+        allowed_direct_updates = [
+            'first_name', 'last_name', 'email', 'phone_number', 'age',
+            'education_summary', 'experience_summary', 'skills_summary',
+            'languages', 'seminars', 'notes', 'evaluation_rating',
+            'interview_location', 'interview_type',
+            'hr_comments'  # Added hr_comments
+        ]
 
-                if key == 'interview_datetime':
-                    new_dt_value = None
-                    if value:  # Αν το value δεν είναι None ή κενό string
-                        try:
-                            # Προσπάθεια parsing του ISO string σε datetime object
-                            parsed_dt = dateutil_parser.isoparse(value)
-                            # Μετατροπή σε UTC αν δεν έχει timezone, ή προσαρμογή σε UTC αν έχει
-                            new_dt_value = parsed_dt.astimezone(
-                                timezone.utc) if parsed_dt.tzinfo else parsed_dt.replace(tzinfo=timezone.utc)
-                        except (ValueError, TypeError) as date_parse_err:
-                            current_app.logger.warning(
-                                f"Invalid date format for interview_datetime ('{value}'). Error: {date_parse_err}. Field not updated.")
-                            # Μπορείς να επιστρέψεις σφάλμα 400 εδώ αν θες αυστηρό έλεγχο
-                            # return jsonify({"error": f"Invalid date format for interview_datetime: {value}. Use ISO 8601 format."}), 400
-                            continue  # Παράλειψη αυτού του πεδίου
-                    # new_dt_value είναι είτε datetime object σε UTC, είτε None
-                    if new_dt_value != original_interview_time:  # Συγκρίνουμε datetime objects
-                        setattr(candidate, key, new_dt_value)
-                        interview_time_changed_flag = True
-                        updated_fields_tracker = True
-                elif key == 'age':
-                    new_age_val = None
-                    if value is not None and str(value).strip().isdigit(): new_age_val = int(value)
-                    if current_value_on_candidate != new_age_val:
-                        setattr(candidate, key, new_age_val);
-                        updated_fields_tracker = True
-                elif key in ['offers', 'interviewers', 'history']:  # JSONB fields
-                    # Για JSONB, είναι καλύτερα να ενημερώνεις απευθείας και να κάνεις flag_modified
-                    # αν η δομή είναι πολύπλοκη. Για απλή αντικατάσταση λίστας:
-                    if isinstance(value, list):  # Βασικός έλεγχος τύπου
-                        setattr(candidate, key, value)
-                        flag_modified(candidate, key)  # Σημαντικό για JSONB/Array
-                        updated_fields_tracker = True
+        for key, value_from_payload in data.items():
+            if key in allowed_direct_updates:
+                current_value_on_candidate = getattr(candidate, key, None)
+                new_value = value_from_payload
+
+                if key == 'age':
+                    if value_from_payload is None or str(value_from_payload).strip() == '':
+                        new_value = None
                     else:
+                        try:
+                            new_value = int(value_from_payload)
+                            if not (0 <= new_value <= 120):  # Basic age validation
+                                new_value = None  # Or keep old, or raise error
+                                current_app.logger.warning(f"Invalid age value: {value_from_payload}. Set to None.")
+                        except ValueError:
+                            current_app.logger.warning(
+                                f"Invalid value for age: {value_from_payload}. Skipping update for age.")
+                            continue  # Skip this field update
+
+                if key == 'email' and value_from_payload:
+                    new_value = value_from_payload.lower().strip()
+                    if new_value != candidate.email:  # Check only if email is actually changing
+                        # Check for uniqueness constraint (email, company_id)
+                        existing_with_new_email = Candidate.query.filter(
+                            Candidate.email == new_value,
+                            Candidate.company_id == candidate.company_id,
+                            Candidate.candidate_id != candidate.candidate_id  # Exclude self
+                        ).first()
+                        if existing_with_new_email:
+                            current_app.logger.warning(
+                                f"Attempt to update email for candidate {candidate.candidate_id} to '{new_value}', which already exists for company {candidate.company_id}.")
+                            return jsonify({
+                                               "error": f"Email '{new_value}' is already in use by another candidate in this company."}), 409
+
+                if current_value_on_candidate != new_value:
+                    setattr(candidate, key, new_value)
+                    updated_fields_tracker = True
+                    current_app.logger.debug(
+                        f"Candidate {candidate.candidate_id}: Field '{key}' changed from '{current_value_on_candidate}' to '{new_value}'")
+
+            elif key == 'interview_datetime':
+                new_dt_value_utc = None
+                if value_from_payload:  # If a value is provided (could be null or empty string from frontend)
+                    try:
+                        # Attempt to parse ISO format string
+                        parsed_dt = dateutil_parser.isoparse(value_from_payload)
+                        # Ensure it's timezone-aware and in UTC
+                        new_dt_value_utc = parsed_dt.astimezone(
+                            dt_timezone.utc) if parsed_dt.tzinfo else parsed_dt.replace(tzinfo=dt_timezone.utc)
+                    except (ValueError, TypeError) as date_parse_err:
                         current_app.logger.warning(
-                            f"Invalid data type for '{key}' for candidate {candidate.candidate_id}. Expected list, got {type(value)}.")
-                else:  # Για τα υπόλοιπα πεδία
-                    if current_value_on_candidate != value:
-                        setattr(candidate, key, value)
-                        updated_fields_tracker = True
+                            f"Invalid date format for interview_datetime ('{value_from_payload}'). Error: {date_parse_err}. Skipping update.")
+                        continue  # Skip this field update
 
-            elif key == 'positions' and isinstance(value, list):  # Διαχείριση των positions
-                current_positions_on_candidate = set(p.position_name.lower() for p in candidate.positions)
-                target_position_names_from_payload = set(
-                    p_name.strip().lower() for p_name in value if isinstance(p_name, str) and p_name.strip())
+                # Check if the new datetime is actually different from the old one
+                if (original_interview_time and new_dt_value_utc != original_interview_time) or \
+                        (not original_interview_time and new_dt_value_utc is not None) or \
+                        (original_interview_time and new_dt_value_utc is None):  # Handles setting to null
+                    candidate.interview_datetime = new_dt_value_utc
+                    interview_time_changed_flag = True
+                    updated_fields_tracker = True
+                    current_app.logger.debug(
+                        f"Candidate {candidate.candidate_id}: Field 'interview_datetime' changed from '{original_interview_time}' to '{new_dt_value_utc}'")
 
-                # Αφαίρεση θέσεων που δεν υπάρχουν στο payload
-                positions_to_remove_from_candidate = [p for p in candidate.positions if
-                                                      p.position_name.lower() not in target_position_names_from_payload]
-                if positions_to_remove_from_candidate:
-                    for pos_obj_to_remove in positions_to_remove_from_candidate:
+            elif key == 'positions' and isinstance(value_from_payload, list):
+                current_candidate_pos_names_lower = {p.position_name.lower().strip() for p in candidate.positions}
+                target_pos_names_from_payload_lower = {p_name.strip().lower() for p_name in value_from_payload if
+                                                       isinstance(p_name, str) and p_name.strip()}
+
+                # Positions to remove
+                positions_to_disassociate_objs = [p for p in candidate.positions if
+                                                  p.position_name.lower().strip() not in target_pos_names_from_payload_lower]
+                if positions_to_disassociate_objs:
+                    for pos_obj_to_remove in positions_to_disassociate_objs:
                         candidate.positions.remove(pos_obj_to_remove)
                     updated_fields_tracker = True
+                    current_app.logger.debug(
+                        f"Candidate {candidate.candidate_id}: Disassociated positions: {[p.position_name for p in positions_to_disassociate_objs]}")
 
-                # Προσθήκη νέων θέσεων από το payload
-                for pos_name_to_add_lower in target_position_names_from_payload:
-                    if pos_name_to_add_lower not in current_positions_on_candidate:
-                        # Βρες ή δημιούργησε τη θέση (case-insensitive search, αλλά αποθήκευση με το case από το payload)
-                        # Βρες το αρχικό όνομα από το payload για case-sensitive αποθήκευση
-                        original_case_pos_name = next(
-                            (p_name for p_name in value if p_name.strip().lower() == pos_name_to_add_lower),
-                            pos_name_to_add_lower.title())
+                # Positions to add
+                for pos_name_target_lower in target_pos_names_from_payload_lower:
+                    if pos_name_target_lower not in current_candidate_pos_names_lower:
+                        # Find original case name from payload for creating new position
+                        original_case_pos_name = next((p_name_orig for p_name_orig in value_from_payload if
+                                                       p_name_orig.strip().lower() == pos_name_target_lower),
+                                                      pos_name_target_lower.title())
 
-                        position_entity = Position.query.filter(
-                            func.lower(Position.position_name) == pos_name_to_add_lower,
-                            Position.company_id == candidate.company_id  # Σημαντικό: στην ίδια εταιρεία
+                        position_obj_to_add = Position.query.filter(
+                            func.lower(Position.position_name) == pos_name_target_lower,
+                            Position.company_id == candidate.company_id
                         ).first()
-                        if not position_entity:
-                            position_entity = Position(position_name=original_case_pos_name,
-                                                       company_id=candidate.company_id)
-                            db.session.add(position_entity)
-                        if position_entity not in candidate.positions:  # Διπλός έλεγχos για σιγουριά
-                            candidate.positions.append(position_entity)
-                        updated_fields_tracker = True
+                        if not position_obj_to_add:  # Create if not exists for this company
+                            position_obj_to_add = Position(position_name=original_case_pos_name,
+                                                           company_id=candidate.company_id, status='Open')
+                            db.session.add(position_obj_to_add)  # Add to session for commit
+                            current_app.logger.debug(
+                                f"Candidate {candidate.candidate_id}: Created new position '{original_case_pos_name}' during update.")
 
-        # Λογική μετά την ενημέρωση των πεδίων
-        if interview_time_changed_flag:
-            if candidate.interview_datetime:  # Αν ορίστηκε νέα ώρα συνέντευξης
-                candidate.candidate_confirmation_status = 'Pending'  # Επαναφορά σε Pending
-                candidate.confirmation_uuid = str(uuid.uuid4())  # Νέο UUID για επιβεβαίωση
-                flag_modified(candidate, "candidate_confirmation_status")
-                flag_modified(candidate, "confirmation_uuid")
-            else:  # Αν η ώρα συνέντευξης αφαιρέθηκε
-                candidate.candidate_confirmation_status = None
-                flag_modified(candidate, "candidate_confirmation_status")
-            # updated_fields_tracker είναι ήδη True
+                        if position_obj_to_add not in candidate.positions:  # Check if already in the list before appending
+                            candidate.positions.append(position_obj_to_add)
+                            updated_fields_tracker = True
+                            current_app.logger.debug(
+                                f"Candidate {candidate.candidate_id}: Associated with position '{position_obj_to_add.position_name}'")
+                # No need for flag_modified(candidate, "positions") if using db.relationship with backref and appends/removes
 
+            elif key == 'offers' and isinstance(value_from_payload, list):
+                # Basic sanitization for offers
+                sanitized_offers = []
+                for offer_data in value_from_payload:
+                    if isinstance(offer_data, dict):
+                        clean_offer = {}
+                        if 'offer_amount' in offer_data and offer_data['offer_amount'] not in [None, '']:
+                            try:
+                                clean_offer['offer_amount'] = float(offer_data['offer_amount'])
+                            except (ValueError, TypeError):
+                                clean_offer['offer_amount'] = None
+                        else:
+                            clean_offer['offer_amount'] = None
+
+                        if 'offer_date' in offer_data and offer_data['offer_date']:
+                            try:
+                                # Ensure date is valid ISO format, or set to now
+                                dateutil_parser.isoparse(offer_data['offer_date'])
+                                clean_offer['offer_date'] = offer_data['offer_date']
+                            except:
+                                clean_offer['offer_date'] = datetime.now(dt_timezone.utc).isoformat()
+                        else:
+                            clean_offer['offer_date'] = datetime.now(dt_timezone.utc).isoformat()
+                        clean_offer['offer_notes'] = offer_data.get('offer_notes', '')  # Ensure notes is a string
+                        sanitized_offers.append(clean_offer)
+
+                # Compare sanitized offers with existing offers
+                # This comparison might be tricky if order matters or if objects are complex.
+                # For simple list of dicts, direct comparison might work if order is consistent.
+                # A more robust way is to compare sets of frozensets of items if order doesn't matter.
+                if candidate.offers != sanitized_offers:  # Simple comparison, might need improvement
+                    candidate.offers = sanitized_offers
+                    flag_modified(candidate, "offers")  # Mark as modified for JSONB
+                    updated_fields_tracker = True
+                    current_app.logger.debug(f"Candidate {candidate.candidate_id}: Offers updated.")
+
+        # Handle status change separately as it might trigger other logic
         new_status_from_payload = data.get('current_status', original_status)
-        if new_status_from_payload != original_status:  # Το status άλλαξε
-            candidate.current_status = new_status_from_payload  # Το είχαμε κάνει ήδη, αλλά για σαφήνεια
-            # updated_fields_tracker είναι ήδη True
-            # Προσθήκη στο history
+        status_changed_flag = False
+        if new_status_from_payload != original_status:
+            candidate.current_status = new_status_from_payload
+            updated_fields_tracker = True
+            status_changed_flag = True
             candidate.add_history_event(
                 event_type="status_change",
                 description=f"Status changed from '{original_status}' to '{new_status_from_payload}'.",
                 actor_id=user_id_for_logs,
-                details={"previous_status": original_status, "new_status": new_status_from_payload,
-                         "notes": data.get('notes', candidate.notes)}
+                actor_username=user_username_for_logs,
+                details={  # Only include relevant, non-sensitive details
+                    "previous_status": original_status,
+                    "new_status": new_status_from_payload,
+                    # "notes": data.get('notes', candidate.notes) # ΑΦΑΙΡΕΘΗΚΕ ΑΠΟ ΕΔΩ
+                }
             )
-            # Αν το status αλλάζει από Interview σε κάτι άλλο (εκτός από Evaluation κλπ), καθάρισε τα interview fields
-            if original_status and 'Interview' in original_status and new_status_from_payload not in ['Evaluation',
-                                                                                                      'Interview',
-                                                                                                      'OfferMade',
-                                                                                                      'Hired']:
+            current_app.logger.debug(
+                f"Candidate {candidate.candidate_id}: Status changed from '{original_status}' to '{new_status_from_payload}' by {user_username_for_logs}")
+
+            # Reset interview-related fields if status moves away from interview stages
+            if original_status in ['Interview', 'Evaluation'] and new_status_from_payload not in ['Interview',
+                                                                                                  'Evaluation',
+                                                                                                  'OfferMade', 'Hired']:
                 candidate.interview_datetime = None
                 candidate.interview_location = None
                 candidate.interview_type = None
-                candidate.interviewers = []
-                candidate.candidate_confirmation_status = None
-                flag_modified(candidate, "interviewers")  # Σημαντικό για JSONB
-                flag_modified(candidate, "candidate_confirmation_status")
+                candidate.candidate_confirmation_status = None  # Reset confirmation
 
-        if not updated_fields_tracker:
-            return jsonify({"message": "No changes detected or no updatable fields provided."}), 304
+            # Reset fields if moving back to NeedsReview from a final stage
+            if new_status_from_payload == 'NeedsReview' and original_status in ['Rejected', 'Declined', 'Hired',
+                                                                                'ParsingFailed']:
+                candidate.candidate_confirmation_status = None
+                if 'evaluation_rating' not in data: candidate.evaluation_rating = None  # Clear if not explicitly sent
+                if 'offers' not in data: candidate.offers = []; flag_modified(candidate,
+                                                                              "offers")  # Clear if not explicitly sent
+
+        # Handle candidate confirmation status logic based on interview scheduling/status change
+        if interview_time_changed_flag or (status_changed_flag and candidate.current_status == 'Interview'):
+            if candidate.interview_datetime:  # If an interview is scheduled (or re-scheduled)
+                # Set to Pending only if it's not already Pending or if UUID needs refresh.
+                # A new UUID is good practice for a new/changed invitation.
+                candidate.candidate_confirmation_status = 'Pending'
+                candidate.confirmation_uuid = uuid.uuid4()  # Always assign a new UUID for a new/changed interview
+                current_app.logger.info(
+                    f"Candidate {candidate.candidate_id}: Interview (re)scheduled. Confirmation status set to Pending with new UUID {candidate.confirmation_uuid}.")
+            else:  # If interview_datetime is cleared
+                if candidate.candidate_confirmation_status is not None:
+                    candidate.candidate_confirmation_status = None
+                    current_app.logger.info(
+                        f"Candidate {candidate.candidate_id}: Interview cleared. Confirmation status reset.")
+
+        if not updated_fields_tracker:  # No changes were made
+            cv_url_val_no_change = s3_service.generate_presigned_url(candidate.cv_storage_path,
+                                                                     expiration=900) if candidate.cv_storage_path else None
+            return jsonify(candidate.to_dict(include_cv_url=True,
+                                             cv_url=cv_url_val_no_change)), 200  # Return 200 OK with current data
 
         try:
+            candidate.updated_at = datetime.now(dt_timezone.utc)  # Update timestamp
             db.session.commit()
-            current_app.logger.info(f"Candidate {candidate.candidate_id} updated by {user_id_for_logs}.")
+            current_app.logger.info(
+                f"Candidate {candidate.candidate_id} updated successfully by {user_id_for_logs} ({user_username_for_logs}).")
 
-            # Celery tasks μετά το commit
-            if interview_time_changed_flag and candidate.interview_datetime:
-                # Βεβαιώσου ότι το task περιμένει το candidate_id ως string
-                celery.send_task('tasks.communication.send_interview_invitation_email_task',
-                                 args=[str(candidate.candidate_id)])
+            # Trigger emails based on status changes or interview scheduling
+            should_send_invitation = (
+                                                 interview_time_changed_flag and candidate.interview_datetime and candidate.current_status == 'Interview') or \
+                                     (
+                                                 status_changed_flag and candidate.current_status == 'Interview' and candidate.interview_datetime and candidate.candidate_confirmation_status == 'Pending')
 
-            if new_status_from_payload != original_status and new_status_from_payload in ['Rejected',
-                                                                                          'Declined']:  # Ή όποια άλλα statuses απόρριψης
-                celery.send_task('tasks.communication.send_rejection_email_task', args=[str(candidate.candidate_id)])
+            if should_send_invitation:
+                try:
+                    celery.send_task('tasks.communication.send_interview_invitation_email_task',
+                                     args=[str(candidate.candidate_id)])
+                    current_app.logger.info(f"Sent interview invitation task for candidate {candidate.candidate_id}")
+                except Exception as celery_e:
+                    current_app.logger.error(
+                        f"Celery task queue error (send_interview_invitation_email_task): {celery_e}")
 
-            return jsonify(candidate.to_dict()), 200
+            if status_changed_flag and new_status_from_payload in ['Rejected', 'Declined']:
+                try:
+                    celery.send_task('tasks.communication.send_rejection_email_task',
+                                     args=[str(candidate.candidate_id)])
+                    current_app.logger.info(f"Sent rejection email task for candidate {candidate.candidate_id}")
+                except Exception as celery_e:
+                    current_app.logger.error(f"Celery task queue error (send_rejection_email_task): {celery_e}")
+
+            cv_url_val_updated = s3_service.generate_presigned_url(candidate.cv_storage_path,
+                                                                   expiration=900) if candidate.cv_storage_path else None
+            return jsonify(candidate.to_dict(include_cv_url=True, cv_url=cv_url_val_updated)), 200
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(f"Error updating candidate {candidate.candidate_id}: {e}", exc_info=True)
+            current_app.logger.error(f"Error committing updates for candidate {candidate.candidate_id}: {e}",
+                                     exc_info=True)
             return jsonify({"error": "Failed to update candidate details due to an internal error."}), 500
 
     elif request.method == 'DELETE':
-        current_app.logger.info(f"DELETE Candidate {candidate.candidate_id} by User {user_id_for_logs}")
-        s3_key_to_delete_on_success = candidate.cv_storage_path
-        candidate_name_for_log_msg = candidate.get_full_name()
+        current_app.logger.info(
+            f"DELETE Candidate {candidate.candidate_id} attempt by User {user_id_for_logs} ({user_username_for_logs})")
+        s3_key_to_delete = candidate.cv_storage_path
+        candidate_name_log = candidate.get_full_name()  # Get name before deleting
+        cand_id_log = str(candidate.candidate_id)  # Get ID before deleting
+
         try:
             db.session.delete(candidate)
             db.session.commit()
             current_app.logger.info(
-                f"Candidate {candidate.candidate_id} ({candidate_name_for_log_msg}) deleted from DB by {user_id_for_logs}.")
-            # Διαγραφή από S3 μετά την επιτυχή διαγραφή από DB
-            if s3_key_to_delete_on_success:
+                f"Candidate {cand_id_log} ('{candidate_name_log}') deleted from DB by {user_id_for_logs} ({user_username_for_logs}).")
+            if s3_key_to_delete:
                 try:
-                    s3_service.delete_file(s3_key_to_delete_on_success)
-                    current_app.logger.info(
-                        f"S3 file {s3_key_to_delete_on_success} deleted for candidate {candidate.candidate_id}.")
+                    s3_service.delete_file(s3_key_to_delete)
+                    current_app.logger.info(f"S3 file {s3_key_to_delete} deleted for candidate {cand_id_log}.")
                 except Exception as s3_e:
-                    current_app.logger.error(
-                        f"S3 Delete error for key {s3_key_to_delete_on_success} (Candidate {candidate.candidate_id} already deleted from DB): {s3_e}",
-                        exc_info=True)
-            return jsonify({"message": f"Candidate '{candidate_name_for_log_msg}' deleted successfully."}), 200
+                    current_app.logger.error(f"S3 Delete error for key {s3_key_to_delete} (Cand {cand_id_log}): {s3_e}",
+                                             exc_info=True)
+            return jsonify({"message": f"Candidate '{candidate_name_log}' deleted successfully."}), 200
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(f"Error deleting candidate {candidate.candidate_id} from DB: {e}", exc_info=True)
+            current_app.logger.error(f"Error deleting candidate {cand_id_log} from DB: {e}", exc_info=True)
             return jsonify({"error": "Failed to delete candidate from database."}), 500
 
+    return jsonify({"error": "Method not supported for this endpoint."}), 405
 
-@bp.route('/candidate/<string:candidate_id_url>/cv_url',
-          methods=['GET'])  # Άλλαξε από api_bp σε bp, και το όνομα της παραμέτρου
+
+# --- CV URL, Search, Settings, Interview Confirm/Decline Routes ---
+@bp.route('/candidate/<string:candidate_id_url>/cv_url', methods=['GET'])
 @login_required
-def get_candidate_cv_url(candidate_id_url):  # Η παράμετρος ταιριάζει με το URL
+def get_candidate_cv_url(candidate_id_url):
+    try:
+        candidate_uuid = uuid.UUID(candidate_id_url)
+    except ValueError:
+        return jsonify({"error": "Invalid candidate ID format."}), 400
+
+    candidate = Candidate.query.get_or_404(candidate_uuid, description=f"Candidate {candidate_id_url} not found.")
     user_company_id_context = get_current_user_company_id()
-    candidate = Candidate.query.get_or_404(candidate_id_url, description=f"Candidate {candidate_id_url} not found.")
 
     if current_user.role != 'superadmin':
         if not user_company_id_context or candidate.company_id != user_company_id_context:
@@ -578,11 +718,11 @@ def get_candidate_cv_url(candidate_id_url):  # Η παράμετρος ταιρ�
         return jsonify({"error": "No CV file associated with this candidate."}), 404
 
     try:
-        # Δημιουργία presigned URL (π.χ., για 15 λεπτά = 900 δευτερόλεπτα)
-        cv_url = s3_service.generate_presigned_url(candidate.cv_storage_path, expiration=900)
+        cv_url = s3_service.generate_presigned_url(candidate.cv_storage_path, expiration=900)  # 15 minutes
         if cv_url:
             return jsonify({"cv_url": cv_url, "original_filename": candidate.cv_original_filename}), 200
         else:
+            # This case should ideally be handled by an exception in generate_presigned_url
             current_app.logger.error(
                 f"S3 service failed to generate presigned URL for candidate {candidate.candidate_id}, S3 key {candidate.cv_storage_path}")
             return jsonify({"error": "Could not generate CV URL due to S3 service issue."}), 500
@@ -592,14 +732,13 @@ def get_candidate_cv_url(candidate_id_url):  # Η παράμετρος ταιρ�
         return jsonify({"error": "Failed to generate CV URL due to an internal error."}), 500
 
 
-@bp.route('/search', methods=['GET'])  # Άλλαξε από api_bp σε bp
+@bp.route('/search', methods=['GET'])
 @login_required
 def search_candidates():
     query_term = request.args.get('q', '').strip()
-    status_filter_term = request.args.get('status', None)
+    status_filter = request.args.get('status', None)
     page = request.args.get('page', 1, type=int)
-    per_page = request.args.get('per_page', 20, type=int)  # Default 20 results per page
-
+    per_page = request.args.get('per_page', 15, type=int)
     user_company_id_context = get_current_user_company_id()
     query_target_company_id = None
 
@@ -607,12 +746,10 @@ def search_candidates():
         company_id_param = request.args.get('company_id', type=int)
         if company_id_param:
             query_target_company_id = company_id_param
-        # Αν ο superadmin δεν δώσει company_id, μπορεί να ψάχνει σε όλες τις εταιρείες (προσοχή στην απόδοση)
-        # ή να απαιτείται company_id. Για τώρα, αν δεν δοθεί, δεν φιλτράρει ανά εταιρεία.
     elif user_company_id_context:
         query_target_company_id = user_company_id_context
     else:
-        return jsonify({"error": "User not associated with a company or unauthorized."}), 403
+        return jsonify({"error": "User not associated with a company or unauthorized for search."}), 403
 
     try:
         query_builder = Candidate.query
@@ -621,269 +758,200 @@ def search_candidates():
 
         if query_term:
             search_pattern = f"%{query_term}%"
-            # Αναζήτηση σε βασικά πεδία του Candidate
-            candidate_search_conditions = [
+            # Conditions for searching in candidate fields
+            conditions = [
                 Candidate.first_name.ilike(search_pattern),
                 Candidate.last_name.ilike(search_pattern),
                 Candidate.email.ilike(search_pattern),
                 Candidate.phone_number.ilike(search_pattern),
-                Candidate.skills_summary.ilike(search_pattern),  # Αναζήτηση και στα skills
+                Candidate.skills_summary.ilike(search_pattern),
                 Candidate.education_summary.ilike(search_pattern),
                 Candidate.experience_summary.ilike(search_pattern),
-                Candidate.notes.ilike(search_pattern)
+                Candidate.notes.ilike(search_pattern),
+                Candidate.hr_comments.ilike(search_pattern)  # Search in HR comments as well
             ]
-            # Αναζήτηση και στο όνομα της θέσης (Position)
-            # Χρησιμοποιούμε outerjoin για να συμπεριληφθούν και υποψήφιοι χωρίς συνδεδεμένη θέση
+            # Add condition for searching in associated position names
             query_builder = query_builder.outerjoin(Candidate.positions).filter(
-                or_(*candidate_search_conditions, Position.position_name.ilike(search_pattern))
+                or_(*conditions, Position.position_name.ilike(search_pattern))
             )
 
-        if status_filter_term:
-            # Μπορείς να έχεις μια λίστα έγκυρων statuses για φιλτράρισμα
-            # valid_statuses_for_filter = [...]
-            # if status_filter_term in valid_statuses_for_filter:
-            query_builder = query_builder.filter(Candidate.current_status == status_filter_term)
+        if status_filter and status_filter.lower() != 'all':
+            query_builder = query_builder.filter(Candidate.current_status == status_filter)
 
-        # Χρήση pagination
-        candidates_pagination = query_builder.distinct().order_by(Candidate.submission_date.desc()).paginate(
+        # Use distinct to avoid duplicate candidates if they match on multiple positions or criteria
+        pagination = query_builder.distinct().order_by(Candidate.submission_date.desc().nullslast()).paginate(
             page=page, per_page=per_page, error_out=False
         )
 
-        candidates_data = [cand.to_dict() for cand in candidates_pagination.items]
+        candidates_data = [cand.to_dict() for cand in pagination.items]  # Consider if cv_url is needed here
 
         return jsonify({
             "candidates": candidates_data,
-            "total_results": candidates_pagination.total,
-            "current_page": candidates_pagination.page,
-            "per_page": candidates_pagination.per_page,
-            "total_pages": candidates_pagination.pages
+            "total_results": pagination.total,
+            "current_page": pagination.page,
+            "per_page": pagination.per_page,
+            "total_pages": pagination.pages
         }), 200
     except Exception as e:
         current_app.logger.error(
-            f"Search Error (Query: '{query_term}', User: {current_user.id}, Company: {query_target_company_id}): {e}",
+            f"Search Error (Query: '{query_term}', Status: '{status_filter}', User: {current_user.id}, Company: {query_target_company_id}): {e}",
             exc_info=True)
         return jsonify({"error": "Search operation failed due to an internal error."}), 500
 
 
-@bp.route('/settings', methods=['GET', 'PUT'])  # Άλλαξε από api_bp σε bp
+@bp.route('/settings', methods=['GET', 'PUT'])
 @login_required
 def handle_settings():
-    user_company_id_context = get_current_user_company_id()
-    company_settings_obj = None
-
-    target_company_id_for_operation = None
-
-    if current_user.role == 'superadmin':
-        # Ο superadmin πρέπει να ορίσει company_id για GET/PUT
-        target_company_id_param = request.args.get('company_id', type=int)  # Για GET
-        if request.method == 'PUT':
-            data_for_put = request.get_json()
-            if not data_for_put: return jsonify({"error": "Request body must be JSON for PUT."}), 400
-            target_company_id_param = data_for_put.get('company_id',
-                                                       target_company_id_param)  # Πάρε το από το body αν υπάρχει
-            if not isinstance(target_company_id_param, int):  # Εξασφάλιση ότι είναι int
-                try:
-                    target_company_id_param = int(target_company_id_param)
-                except (ValueError, TypeError):
-                    target_company_id_param = None
-
-        if not target_company_id_param:
-            return jsonify({
-                               "error": "Superadmin must specify a 'company_id' (in query params for GET, or in JSON body for PUT) to manage settings."}), 400
-        target_company_id_for_operation = target_company_id_param
-        company_settings_obj = CompanySettings.query.filter_by(company_id=target_company_id_for_operation).first_or_404(
-            description=f"CompanySettings not found for company_id {target_company_id_for_operation}"
-        )
-    elif user_company_id_context:  # Για company_admin ή user (αν οι users μπορούν να δουν κάποιες ρυθμίσεις)
-        target_company_id_for_operation = user_company_id_context
-        company_settings_obj = CompanySettings.query.filter_by(company_id=target_company_id_for_operation).first()
-        if not company_settings_obj:  # Αν δεν υπάρχουν, δημιούργησέ τα (κυρίως για company_admin)
-            if current_user.role == 'company_admin':
-                try:
-                    company_settings_obj = CompanySettings(company_id=target_company_id_for_operation)
-                    db.session.add(company_settings_obj)
-                    db.session.commit()
-                    current_app.logger.info(
-                        f"Dynamically created CompanySettings for company_id {target_company_id_for_operation} by {current_user.username}.")
-                except Exception as cs_create_err:
-                    db.session.rollback()
-                    current_app.logger.error(
-                        f"Failed to create CompanySettings for {target_company_id_for_operation}: {cs_create_err}",
-                        exc_info=True)
-                    return jsonify({"error": "Company settings missing and could not be initialized."}), 500
-            else:  # Αν είναι απλός user και δεν υπάρχουν settings
-                return jsonify({"error": "Company settings not configured."}), 404
-    else:
-        return jsonify({"error": "User not associated with a company or unauthorized."}), 403
-
-    # Έλεγχος δικαιωμάτων για PUT
-    if request.method == 'PUT' and current_user.role not in ['company_admin', 'superadmin']:
-        return jsonify({"error": "You do not have permission to modify company settings."}), 403
-
-    # Αν ο company_admin προσπαθεί να αλλάξει ρυθμίσεις άλλης εταιρείας (μέσω "πειραγμένου" company_id στο PUT request από superadmin context)
-    if request.method == 'PUT' and current_user.role == 'company_admin' and company_settings_obj.company_id != user_company_id_context:
-        return jsonify({"error": "Company admin can only modify settings for their own company."}), 403
-
     if request.method == 'GET':
-        return jsonify({
-            "company_id": company_settings_obj.company_id,
-            "rejection_email_template": company_settings_obj.rejection_email_template,
-            # "reminder_email_template": company_settings_obj.reminder_email_template, # Αν υπάρχει
-            "interview_invitation_email_template": company_settings_obj.interview_invitation_email_template,
-            "default_interview_reminder_timing_minutes": company_settings_obj.default_interview_reminder_timing_minutes,
-            "enable_reminders_feature_for_company": company_settings_obj.enable_reminders_feature_for_company
-        }), 200
-
-    elif request.method == 'PUT':
-        data = request.get_json()  # Το έχουμε ήδη πάρει για τον superadmin, αλλά για company_admin το παίρνουμε εδώ
-        if not data: return jsonify({"error": "No settings data provided in JSON body."}), 400
-
-        updated_fields_tracker = False
-        # Πεδία που επιτρέπεται να ενημερωθούν και ο τύπος τους
-        allowed_company_settings_fields = {
-            'rejection_email_template': str,
-            # 'reminder_email_template': str,
-            'interview_invitation_email_template': str,
-            'default_interview_reminder_timing_minutes': int,
-            'enable_reminders_feature_for_company': bool
+        user_settings = {
+            "enable_email_interview_reminders": current_user.enable_email_interview_reminders,
+            "interview_reminder_lead_time_minutes": current_user.interview_reminder_lead_time_minutes
         }
+        return jsonify(user_settings), 200
+    elif request.method == 'PUT':
+        data = request.get_json()
+        if not data: return jsonify({"error": "No data provided."}), 400
 
-        for key, value_from_payload in data.items():
-            if key in allowed_company_settings_fields:
-                expected_type = allowed_company_settings_fields[key]
-                current_value_on_object = getattr(company_settings_obj, key)
+        updated = False
+        if 'enable_email_interview_reminders' in data:
+            current_user.enable_email_interview_reminders = bool(data['enable_email_interview_reminders'])
+            updated = True
 
-                try:
-                    casted_value_from_payload = None
-                    if value_from_payload is not None:
-                        if expected_type == bool:  # Ειδικός χειρισμός για boolean
-                            casted_value_from_payload = str(value_from_payload).lower() in ['true', '1', 'yes']
-                        else:
-                            casted_value_from_payload = expected_type(value_from_payload)
+        if 'interview_reminder_lead_time_minutes' in data:
+            try:
+                lead_time = int(data['interview_reminder_lead_time_minutes'])
+                # Define reasonable min/max for lead time (e.g., 5 min to 2 days)
+                if not (5 <= lead_time <= 2 * 24 * 60):
+                    return jsonify({"error": "Lead time out of range (5-2880 minutes)."}), 400
+                current_user.interview_reminder_lead_time_minutes = lead_time
+                updated = True
+            except (ValueError, TypeError):
+                return jsonify({"error": "Invalid lead time format. Must be an integer."}), 400
 
-                        # Ειδικοί έλεγχοι (π.χ. range για αριθμούς)
-                        if key == 'default_interview_reminder_timing_minutes' and not (
-                                5 <= casted_value_from_payload <= 2880):  # 5 λεπτά έως 2 ημέρες
-                            raise ValueError("Interview reminder lead time out of range (5-2880 minutes).")
-
-                    if current_value_on_object != casted_value_from_payload:
-                        setattr(company_settings_obj, key, casted_value_from_payload)
-                        updated_fields_tracker = True
-                except (ValueError, TypeError) as cast_err:
-                    current_app.logger.warning(
-                        f"Invalid value for company setting '{key}': '{value_from_payload}'. Error: {cast_err}")
-                    return jsonify({
-                                       "error": f"Invalid value or type for setting '{key}'. Expected {expected_type.__name__}."}), 400
-
-        if not updated_fields_tracker:
-            return jsonify({"message": "No changes detected in provided settings."}), 304  # Not Modified
+        if not updated:
+            return jsonify({"message": "No settings changed."}), 304  # Not Modified
 
         try:
             db.session.commit()
-            current_app.logger.info(
-                f"Company settings for Company ID {company_settings_obj.company_id} updated by {current_user.username} (ID: {current_user.id}).")
             return jsonify({
-                "message": "Company settings updated successfully.",
-                "settings": {  # Επιστρέφουμε τις ενημερωμένες ρυθμίσεις
-                    "company_id": company_settings_obj.company_id,
-                    "rejection_email_template": company_settings_obj.rejection_email_template,
-                    "interview_invitation_email_template": company_settings_obj.interview_invitation_email_template,
-                    "default_interview_reminder_timing_minutes": company_settings_obj.default_interview_reminder_timing_minutes,
-                    "enable_reminders_feature_for_company": company_settings_obj.enable_reminders_feature_for_company
+                "message": "Settings updated successfully.",
+                "settings": {
+                    "enable_email_interview_reminders": current_user.enable_email_interview_reminders,
+                    "interview_reminder_lead_time_minutes": current_user.interview_reminder_lead_time_minutes
                 }
             }), 200
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(f"Error saving company settings for {company_settings_obj.company_id}: {e}",
-                                     exc_info=True)
-            return jsonify({"error": "Failed to save company settings due to an internal error."}), 500
+            current_app.logger.error(f"Failed to save user settings for {current_user.id}: {e}", exc_info=True)
+            return jsonify({"error": "Failed to save settings."}), 500
+
+    return jsonify({"error": "Method not allowed."}), 405  # Should not be reached
 
 
-@bp.route('/interviews/confirm/<string:confirmation_uuid>', methods=['GET'])  # Άλλαξε από api_bp σε bp
-def confirm_interview(confirmation_uuid):
+@bp.route('/interviews/confirm/<string:confirmation_uuid_str>', methods=['GET'])
+def confirm_interview(confirmation_uuid_str):
     try:
-        candidate = Candidate.query.filter_by(confirmation_uuid=confirmation_uuid).first()
-        if not candidate:
-            return "<h1>Σφάλμα</h1><p>Ο σύνδεσμος επιβεβαίωσης δεν είναι έγκυρος ή έχει λήξει.</p>", 404
-        if not candidate.interview_datetime:  # Έλεγχος αν υπάρχει προγραμματισμένη συνέντευξη
-            return "<h1>Σφάλμα</h1><p>Δεν υπάρχει προγραμματισμένη συνέντευξη για αυτόν τον υποψήφιο που να αντιστοιχεί σε αυτόν τον σύνδεσμο.</p>", 400
+        confirmation_uuid_obj = uuid.UUID(confirmation_uuid_str)
+    except ValueError:
+        return "<h1>Σφάλμα</h1><p>Ο σύνδεσμος επιβεβαίωσης δεν είναι έγκυρος (λανθασμένη μορφή).</p>", 400
 
-        response_message_html = ""
-        status_code = 200
+    candidate = Candidate.query.filter_by(confirmation_uuid=confirmation_uuid_obj).first()
+    if not candidate:
+        return "<h1>Σφάλμα</h1><p>Ο σύνδεσμος επιβεβαίωσης δεν είναι έγκυρος ή έχει λήξει.</p>", 404
 
-        if candidate.candidate_confirmation_status == 'Confirmed':
-            response_message_html = f"<h1>Ήδη Επιβεβαιωμένο</h1><p>Η συνέντευξή σας στις {candidate.interview_datetime.strftime('%d/%m/%Y %H:%M')} UTC έχει ήδη επιβεβαιωθεί.</p>"
-        elif candidate.candidate_confirmation_status in ['Pending', 'Declined',
-                                                         None]:  # Επιτρέπουμε επιβεβαίωση και αν ήταν Declined ή None
-            candidate.candidate_confirmation_status = 'Confirmed'
-            candidate.add_history_event(
-                event_type="interview_confirmed_by_candidate",
-                description=f"Candidate confirmed interview via link.",
-                details={"confirmation_uuid": confirmation_uuid}
-            )
+    if not candidate.interview_datetime or candidate.current_status != 'Interview':
+        return "<h1>Σφάλμα</h1><p>Δεν υπάρχει ενεργή προγραμματισμένη συνέντευξη για αυτόν τον σύνδεσμο ή η κατάσταση του υποψηφίου δεν είναι 'Interview'.</p>", 400
+
+    html_response = ""
+    http_code = 200
+    original_confirmation_status = candidate.candidate_confirmation_status
+
+    if original_confirmation_status == 'Confirmed':
+        html_response = f"<h1>Ήδη Επιβεβαιωμένο</h1><p>Η συνέντευξή σας στις {candidate.interview_datetime.astimezone(dt_timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC έχει ήδη επιβεβαιωθεί.</p>"
+    elif original_confirmation_status in ['Pending', 'Declined', None]:  # Allow re-confirmation if previously declined
+        candidate.candidate_confirmation_status = 'Confirmed'
+        candidate.add_history_event(
+            event_type="interview_confirmed_by_candidate",
+            description=f"Candidate confirmed interview (was: {original_confirmation_status or 'N/A'}) via link.",
+            actor_username="Candidate",  # System event triggered by candidate action
+            details={"confirmation_uuid": confirmation_uuid_str}
+        )
+        try:
             db.session.commit()
-
-            # Ειδοποίηση του recruiter/εταιρείας μέσω Celery task
+            current_app.logger.info(
+                f"Candidate {candidate.candidate_id} confirmed interview (UUID: {confirmation_uuid_str}).")
+            # Send notification to recruiter
             try:
-                # Βεβαιώσου ότι το task παίρνει τα σωστά arguments
                 celery.send_task('tasks.communication.notify_recruiter_interview_confirmed_task',
                                  args=[str(candidate.candidate_id), candidate.company_id])
             except Exception as celery_err:
-                current_app.logger.error(
-                    f"Failed to send Celery task for interview confirmation (Candidate: {candidate.candidate_id}): {celery_err}",
-                    exc_info=True)
+                current_app.logger.error(f"Celery task error (notify_recruiter_interview_confirmed_task): {celery_err}",
+                                         exc_info=True)
 
-            response_message_html = f"<h1>Επιβεβαίωση Επιτυχής</h1><p>Ευχαριστούμε, {candidate.get_full_name()}! Η συνέντευξή σας στις {candidate.interview_datetime.strftime('%d/%m/%Y %H:%M')} UTC έχει επιβεβαιωθεί.</p>"
-        else:  # Άγνωστο status
-            response_message_html = "<h1>Σφάλμα</h1><p>Αυτή η ενέργεια δεν είναι δυνατή για την τρέχουσα κατάσταση της συνέντευξης.</p>"
-            status_code = 400
+            html_response = f"<h1>Επιβεβαίωση Επιτυχής</h1><p>Ευχαριστούμε, {candidate.get_full_name()}! Η συνέντευξή σας στις {candidate.interview_datetime.astimezone(dt_timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC έχει επιβεβαιωθεί.</p>"
+        except Exception as e_commit:
+            db.session.rollback()
+            current_app.logger.error(
+                f"Error committing interview confirmation for candidate {candidate.candidate_id}: {e_commit}",
+                exc_info=True)
+            html_response = "<h1>Σφάλμα Συστήματος</h1><p>Παρουσιάστηκε ένα πρόβλημα κατά την επιβεβαίωση. Παρακαλούμε δοκιμάστε αργότερα.</p>"
+            http_code = 500
+    else:  # Should not happen with defined states
+        html_response = "<h1>Σφάλμα</h1><p>Αυτή η ενέργεια δεν είναι δυνατή για την τρέχουσα κατάσταση επιβεβαίωσης.</p>"
+        http_code = 400
 
-        return response_message_html, status_code
-    except Exception as e:
-        db.session.rollback()  # Κάνε rollback σε περίπτωση σφάλματος
-        current_app.logger.error(f"Error confirming interview (UUID: {confirmation_uuid}): {e}", exc_info=True)
-        return "<h1>Σφάλμα Συστήματος</h1><p>Παρουσιάστηκε ένα μη αναμενόμενο σφάλμα κατά την επεξεργασία του αιτήματός σας. Παρακαλούμε δοκιμάστε ξανά αργότερα.</p>", 500
+    return html_response, http_code
 
 
-@bp.route('/interviews/decline/<string:confirmation_uuid>', methods=['GET'])  # Άλλαξε από api_bp σε bp
-def decline_interview(confirmation_uuid):
+@bp.route('/interviews/decline/<string:confirmation_uuid_str>', methods=['GET'])
+def decline_interview(confirmation_uuid_str):
     try:
-        candidate = Candidate.query.filter_by(confirmation_uuid=confirmation_uuid).first()
-        if not candidate:
-            return "<h1>Σφάλμα</h1><p>Ο σύνδεσμος απόρριψης δεν είναι έγκυρος ή έχει λήξει.</p>", 404
-        if not candidate.interview_datetime:
-            return "<h1>Σφάλμα</h1><p>Δεν υπάρχει προγραμματισμένη συνέντευξη για αυτόν τον υποψήφιο που να αντιστοιχεί σε αυτόν τον σύνδεσμο.</p>", 400
+        confirmation_uuid_obj = uuid.UUID(confirmation_uuid_str)
+    except ValueError:
+        return "<h1>Σφάλμα</h1><p>Ο σύνδεσμος απόρριψης δεν είναι έγκυρος (λανθασμένη μορφή).</p>", 400
 
-        response_message_html = ""
-        status_code = 200
+    candidate = Candidate.query.filter_by(confirmation_uuid=confirmation_uuid_obj).first()
+    if not candidate:
+        return "<h1>Σφάλμα</h1><p>Ο σύνδεσμος απόρριψης/αλλαγής δεν είναι έγκυρος ή έχει λήξει.</p>", 404
 
-        if candidate.candidate_confirmation_status == 'Declined':
-            response_message_html = f"<h1>Ήδη Δηλωμένη Άρνηση</h1><p>Έχετε ήδη δηλώσει αδυναμία για τη συνέντευξη στις {candidate.interview_datetime.strftime('%d/%m/%Y %H:%M')} UTC.</p>"
-        elif candidate.candidate_confirmation_status in ['Pending', 'Confirmed',
-                                                         None]:  # Επιτρέπουμε άρνηση και αν ήταν Confirmed ή None
-            candidate.candidate_confirmation_status = 'Declined'
-            candidate.add_history_event(
-                event_type="interview_declined_by_candidate",
-                description=f"Candidate declined interview via link.",
-                details={"confirmation_uuid": confirmation_uuid}
-            )
+    if not candidate.interview_datetime or candidate.current_status != 'Interview':
+        return "<h1>Σφάλμα</h1><p>Δεν υπάρχει ενεργή προγραμματισμένη συνέντευξη για αυτόν τον σύνδεσμο ή η κατάσταση του υποψηφίου δεν είναι 'Interview'.</p>", 400
+
+    html_response = ""
+    http_code = 200
+    original_confirmation_status = candidate.candidate_confirmation_status
+
+    if original_confirmation_status == 'Declined':
+        html_response = f"<h1>Ήδη Δηλωμένη Άρνηση</h1><p>Έχετε ήδη δηλώσει αδυναμία για τη συνέντευξη στις {candidate.interview_datetime.astimezone(dt_timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC.</p>"
+    elif original_confirmation_status in ['Pending', 'Confirmed', None]:  # Allow decline even if previously confirmed
+        candidate.candidate_confirmation_status = 'Declined'
+        candidate.add_history_event(
+            event_type="interview_declined_by_candidate",
+            description=f"Candidate declined/requested change for interview (was: {original_confirmation_status or 'N/A'}) via link.",
+            actor_username="Candidate",
+            details={"confirmation_uuid": confirmation_uuid_str}
+        )
+        try:
             db.session.commit()
-
+            current_app.logger.info(
+                f"Candidate {candidate.candidate_id} declined/requested change for interview (UUID: {confirmation_uuid_str}).")
+            # Send notification to recruiter
             try:
                 celery.send_task('tasks.communication.notify_recruiter_interview_declined_task',
                                  args=[str(candidate.candidate_id), candidate.company_id])
             except Exception as celery_err:
-                current_app.logger.error(
-                    f"Failed to send Celery task for interview declination (Candidate: {candidate.candidate_id}): {celery_err}",
-                    exc_info=True)
+                current_app.logger.error(f"Celery task error (notify_recruiter_interview_declined_task): {celery_err}",
+                                         exc_info=True)
 
-            response_message_html = f"<h1>Επιβεβαίωση Άρνησης</h1><p>Λάβαμε την ενημέρωσή σας ότι δεν μπορείτε να παραστείτε στη συνέντευξη στις {candidate.interview_datetime.strftime('%d/%m/%Y %H:%M')} UTC.</p>"
-        else:
-            response_message_html = "<h1>Σφάλμα</h1><p>Αυτή η ενέργεια δεν είναι δυνατή για την τρέχουσα κατάσταση της συνέντευξης.</p>"
-            status_code = 400
+            html_response = f"<h1>Επιβεβαίωση Άρνησης/Αλλαγής</h1><p>Λάβαμε την ενημέρωσή σας για τη συνέντευξη στις {candidate.interview_datetime.astimezone(dt_timezone.utc).strftime('%d/%m/%Y %H:%M')} UTC. Ένας υπεύθυνος θα επικοινωνήσει μαζί σας αν χρειαστεί.</p>"
+        except Exception as e_commit:
+            db.session.rollback()
+            current_app.logger.error(
+                f"Error committing interview decline for candidate {candidate.candidate_id}: {e_commit}", exc_info=True)
+            html_response = "<h1>Σφάλμα Συστήματος</h1><p>Παρουσιάστηκε ένα πρόβλημα κατά την επεξεργασία του αιτήματός σας. Παρακαλούμε δοκιμάστε αργότερα.</p>"
+            http_code = 500
+    else:  # Should not happen
+        html_response = "<h1>Σφάλμα</h1><p>Αυτή η ενέργεια δεν είναι δυνατή για την τρέχουσα κατάσταση επιβεβαίωσης.</p>"
+        http_code = 400
 
-        return response_message_html, status_code
-    except Exception as e:
-        db.session.rollback()
-        current_app.logger.error(f"Error declining interview (UUID: {confirmation_uuid}): {e}", exc_info=True)
-        return "<h1>Σφάλμα Συστήματος</h1><p>Παρουσιάστηκε ένα μη αναμενόμενο σφάλμα. Παρακαλούμε δοκιμάστε ξανά αργότερα.</p>", 500
+    return html_response, http_code

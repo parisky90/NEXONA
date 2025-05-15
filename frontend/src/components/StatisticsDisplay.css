@@ -1,0 +1,32 @@
+/* frontend/src/components/StatisticsDisplay.css */
+.statistics-container .stat-item {
+  background-color: var(--sidebar-bg); /* Χρησιμοποιεί τις μεταβλητές σου */
+  padding: 1rem;
+  border-radius: 6px;
+  text-align: center;
+  border: 1px solid var(--border-color);
+  box-shadow: var(--box-shadow-sm); /* Πρόσθεσα ένα μικρό shadow */
+}
+.statistics-container .stat-item h4 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  color: var(--text-medium-gray);
+  text-transform: uppercase;
+  font-weight: 600; /* Λίγο πιο έντονο */
+}
+.statistics-container .stat-item p {
+  margin-bottom: 0.25rem;
+  color: var(--text-dark-gray); /* Πιο σκούρο χρώμα για τον αριθμό */
+}
+.statistics-container .stat-item small {
+  font-size: 0.75rem;
+  color: var(--text-light-gray);
+}
+
+/* Για το loading/error placeholder μέσα στο statistics container αν χρειαστεί */
+.statistics-container .loading-placeholder,
+.statistics-container .error-message {
+    padding: 1rem;
+    text-align: center;
+}
