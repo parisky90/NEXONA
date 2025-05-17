@@ -1,144 +1,125 @@
-# backend/app/config.py
 import os
 from dotenv import load_dotenv
-import logging
-import json  # Δεν χρησιμοποιείται εδώ, αλλά μπορεί να είναι χρήσιμο για debugging
 
-# Configure basic logging
-config_logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# --- ΦΟΡΤΩΣΗ .env ΣΤΗΝ ΑΡΧΗ ΤΟΥ CONFIG.PY ---
+# Αυτό εξασφαλίζει ότι οι μεταβλητές είναι διαθέσιmes πριν οριστούν οι κλάσεις Config.
+# Το backend/app/config.py είναι ένα επίπεδο μέσα από το root του backend όπου είναι το .env
+# Άρα, η διαδρομή προς το .env είναι '../.env' σε σχέση με το config.py
+# Ή, αν το WORKDIR είναι το backend/, τότε το .env είναι στο τρέχον directory.
 
-# Determine base directory (config.py is in /backend/app/)
-# So, basedir should be /backend/
-basedir = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), '..'))  # Αυτό πάει ένα επίπεδο πάνω από το app/ δηλαδή στο backend/
-dotenv_path = os.path.join(basedir, '.env')  # Ψάχνει το .env στο backend/
+# Πιο ανθεκτικός τρόπος: Βρες το root directory του project
+# Υποθέτουμε ότι το config.py είναι στο app/config.py και το .env είναι στο backend/
+# Άρα, το .env είναι ένα επίπεδο πάνω από τον γονικό φάκελο του config.py
+basedir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))  # Αυτό θα είναι το backend/
+dotenv_path = os.path.join(basedir, '.env')
 
-config_logger.info(f"Config: Determined .env path: {dotenv_path}")
-config_logger.info(f"Config: Checking if .env file exists at path: {os.path.exists(dotenv_path)}")
-
-loaded = load_dotenv(dotenv_path=dotenv_path, verbose=True, override=True)
-
-config_logger.info(f"Config: load_dotenv result (found and loaded?): {loaded}")
-mail_debug_env_value = os.environ.get('MAIL_DEBUG')
-config_logger.info(
-    f"Config: Value of MAIL_DEBUG directly from os.environ after load_dotenv: '{mail_debug_env_value}' (Type: {type(mail_debug_env_value)})")
+if os.path.exists(dotenv_path):
+    print(f"INFO (config.py): Loading environment variables from: {dotenv_path}")
+    load_dotenv(dotenv_path)
+else:
+    print(f"WARNING (config.py): .env file not found at {dotenv_path}. Relying on system environment variables.")
 
 
-def _is_truthy(val):
-    if val is None: return False
-    return str(val).lower() in ('true', '1', 't', 'y', 'yes')
+# --- ΤΕΛΟΣ ΦΟΡΤΩΣΗΣ .env ---
 
 
 class Config:
-    SECRET_KEY = os.environ.get('SECRET_KEY') or 'a-very-insecure-default-secret-key-replace-me'
-    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') or \
-                              'sqlite:///' + os.path.join(basedir, 'fallback_app.db')  # Fallback in backend/
+    APP_NAME = os.getenv('APP_NAME', 'NEXONA')
+    SECRET_KEY = os.getenv('SECRET_KEY', 'your_default_secret_key_123!')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL') or 'redis://redis:6379/0'
-    CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND') or 'redis://redis:6379/0'
-    AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID')
-    AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY')
-    S3_BUCKET = os.environ.get('S3_BUCKET')
-    S3_REGION = os.environ.get('S3_REGION')
-    TEXTKERNEL_API_KEY = os.environ.get('TEXTKERNEL_API_KEY')
-    TEXTKERNEL_ACCOUNT_ID = os.environ.get('TEXTKERNEL_ACCOUNT_ID')
-    TEXTKERNEL_BASE_ENDPOINT = os.environ.get('TEXTKERNEL_BASE_ENDPOINT')
-    MAIL_SERVER = os.environ.get('MAIL_SERVER') or None
-    MAIL_PORT = int(os.environ.get('MAIL_PORT') or 587)
-    MAIL_USE_TLS = _is_truthy(os.environ.get('MAIL_USE_TLS', 'False'))
-    MAIL_USE_SSL = _is_truthy(os.environ.get('MAIL_USE_SSL', 'False'))
-    MAIL_USERNAME = os.environ.get('MAIL_USERNAME') or None
-    MAIL_PASSWORD = os.environ.get('MAIL_PASSWORD') or None
-    MAIL_SENDER = os.environ.get('MAIL_SENDER', '"NEXONA App" <noreply@example.com>')
-    MAIL_DEFAULT_SENDER = MAIL_SENDER
-    MAIL_DEBUG = _is_truthy(os.environ.get('MAIL_DEBUG', 'True'))
-    MAIL_SUPPRESS_SEND = MAIL_DEBUG  # Set suppress based on the evaluated boolean MAIL_DEBUG
-    APP_NAME = os.environ.get('APP_NAME') or 'NEXONA'
-    APP_BASE_URL = os.environ.get('APP_BASE_URL') or 'http://localhost:5000'
-    # CORS Settings from .env or defaults
-    CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*')  # Default to allow all
-    CORS_SUPPORTS_CREDENTIALS = _is_truthy(os.environ.get('CORS_SUPPORTS_CREDENTIALS', 'True'))
-    CORS_EXPOSE_HEADERS_CSV = os.environ.get('CORS_EXPOSE_HEADERS')  # e.g. "Content-Type,X-CSRFToken"
-    if CORS_EXPOSE_HEADERS_CSV:
-        CORS_EXPOSE_HEADERS = [h.strip() for h in CORS_EXPOSE_HEADERS_CSV.split(',')]
-    else:
-        CORS_EXPOSE_HEADERS = ["Content-Type", "X-CSRFToken"]  # Default list
+    SQLALCHEMY_ECHO = os.getenv('SQLALCHEMY_ECHO', 'False').lower() in ('true', '1', 't')
 
-    # Celery specific settings that might be good to have in config
-    CELERY_TIMEZONE = os.environ.get('CELERY_TIMEZONE', 'UTC')
-    CELERY_TASK_ALWAYS_EAGER = _is_truthy(os.environ.get('CELERY_TASK_ALWAYS_EAGER', 'False'))
-    CELERY_TASK_EAGER_PROPAGATES = _is_truthy(
-        os.environ.get('CELERY_TASK_EAGER_PROPAGATES', str(CELERY_TASK_ALWAYS_EAGER)))
+    # Database Configuration
+    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'postgresql://user:pass@host:port/db')
 
-    # Superadmin and Default Company Settings from Environment for seeding
-    SUPERADMIN_EMAIL = os.environ.get('SUPERADMIN_EMAIL')
-    SUPERADMIN_PASSWORD = os.environ.get('SUPERADMIN_PASSWORD')
-    DEFAULT_COMPANY_NAME = os.environ.get('DEFAULT_COMPANY_NAME') or "Default Seed Company"
+    # Celery Configuration
+    CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')
+    CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://redis:6379/0')
+    CELERY_TIMEZONE = os.getenv('CELERY_TIMEZONE', 'UTC')
+    CELERY_TASK_ALWAYS_EAGER = os.getenv('CELERY_TASK_ALWAYS_EAGER', 'False').lower() in ('true', '1', 't')
+    CELERY_TASK_EAGER_PROPAGATES = os.getenv('CELERY_TASK_EAGER_PROPAGATES', 'False').lower() in ('true', '1', 't')
+
+    # Mail Configuration
+    MAIL_SERVER = os.getenv('MAIL_SERVER')
+    MAIL_PORT = int(os.getenv('MAIL_PORT', 587))
+    MAIL_USE_TLS = os.getenv('MAIL_USE_TLS', 'True').lower() in ('true', '1', 't')
+    MAIL_USE_SSL = os.getenv('MAIL_USE_SSL', 'False').lower() in ('true', '1', 't')
+    MAIL_USERNAME = os.getenv('MAIL_USERNAME')
+    MAIL_PASSWORD = os.getenv('MAIL_PASSWORD')
+    MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER', '"NEXONA App" <noreply@example.com>')
+    # MAIL_DEBUG και MAIL_SUPPRESS_SEND είναι καλό να είναι boolean
+    MAIL_DEBUG = os.getenv('MAIL_DEBUG', 'True').lower() in ('true', '1', 't')
+    MAIL_SUPPRESS_SEND = os.getenv('MAIL_SUPPRESS_SEND', 'False').lower() in (
+    'true', '1', 't')  # Default σε False για να στέλνει κανονικά
+
+    # AWS S3 Configuration
+    S3_BUCKET = os.getenv('S3_BUCKET')
+    S3_REGION = os.getenv('S3_REGION')
+    AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
+    AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
+    S3_ENDPOINT_URL = os.getenv('S3_ENDPOINT_URL')  # For MinIO or other S3-compatible
+
+    # Textkernel Configuration
+    TEXTKERNEL_ACCOUNT_ID = os.getenv('TEXTKERNEL_ACCOUNT_ID')
+    TEXTKERNEL_API_KEY = os.getenv('TEXTKERNEL_API_KEY')
+    TEXTKERNEL_BASE_ENDPOINT = os.getenv('TEXTKERNEL_BASE_ENDPOINT', 'https://api.eu.textkernel.com/tx/v10/')
+    TEXTKERNEL_ENABLED = os.getenv('TEXTKERNEL_ENABLED', 'True').lower() in ('true', '1', 't')
+
+    # CORS Configuration
+    CORS_ORIGINS = os.getenv('CORS_ORIGINS', '*')  # Default to all origins for development
+
+    # Logging Level
+    LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
+
+    # Frontend URL (χρήσιμο για links σε emails)
+    FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 
 
 class DevelopmentConfig(Config):
     DEBUG = True
-    SQLALCHEMY_ECHO = _is_truthy(os.environ.get('SQLALCHEMY_ECHO', 'False'))
-    # Ensure MAIL_DEBUG is True for Development, overriding any .env setting if necessary for safety
-    MAIL_DEBUG = True
-    MAIL_SUPPRESS_SEND = True  # Always suppress emails in dev if MAIL_DEBUG is true
-    # For development, Celery tasks can run eagerly
-    CELERY_TASK_ALWAYS_EAGER = _is_truthy(os.environ.get('CELERY_TASK_ALWAYS_EAGER', 'False'))
-    CELERY_TASK_EAGER_PROPAGATES = _is_truthy(
-        os.environ.get('CELERY_TASK_EAGER_PROPAGATES', str(CELERY_TASK_ALWAYS_EAGER)))
+    SQLALCHEMY_ECHO = os.getenv('SQLALCHEMY_ECHO', 'True').lower() in ('true', '1', 't')  # Enable echo for dev
+    MAIL_DEBUG = True  # Override για development
+    MAIL_SUPPRESS_SEND = os.getenv('MAIL_SUPPRESS_SEND', 'True').lower() in (
+    'true', '1', 't')  # Default σε True για dev
+    # CELERY_TASK_ALWAYS_EAGER = True # Για ευκολότερο debugging των tasks τοπικά
+    # CELERY_TASK_EAGER_PROPAGATES = True
+
+
+class TestingConfig(Config):
+    TESTING = True
+    SQLALCHEMY_DATABASE_URI = os.getenv('TEST_DATABASE_URL', 'sqlite:///:memory:')
+    CELERY_TASK_ALWAYS_EAGER = True
+    CELERY_TASK_EAGER_PROPAGATES = True
+    MAIL_SUPPRESS_SEND = True
+    WTF_CSRF_ENABLED = False  # Συχνά απενεργοποιείται για tests
 
 
 class ProductionConfig(Config):
     DEBUG = False
     SQLALCHEMY_ECHO = False
-    # Ensure MAIL_DEBUG is False for production
     MAIL_DEBUG = False
-    MAIL_SUPPRESS_SEND = False  # Emails should be sent in production
-    APP_BASE_URL = os.environ.get('APP_BASE_URL') or 'https://your.production.backend.domain.com'
-    CELERY_TASK_ALWAYS_EAGER = False  # Tasks should run via worker in production
-    CELERY_TASK_EAGER_PROPAGATES = False
+    MAIL_SUPPRESS_SEND = False  # Σε production θέλουμε να στέλνει emails
+    # Βεβαιώσου ότι το SECRET_KEY είναι πολύ ισχυρό και ορίζεται στο .env για production
 
 
-# --- Config Dictionary ---
-config_by_name = {
-    'development': DevelopmentConfig,
-    'production': ProductionConfig,
-    'default': DevelopmentConfig
-}
+# Dictionary για εύκολη πρόσβαση στις configurations
+config_by_name = dict(
+    development=DevelopmentConfig,
+    testing=TestingConfig,
+    production=ProductionConfig,
+    default=DevelopmentConfig  # Default configuration
+)
 
 
-# --- Function to get config based on FLASK_ENV or provided name ---
-def get_config(config_name_str=None):
-    """
-    Retrieves a configuration class.
-    If config_name_str is provided, it uses that.
-    Otherwise, it uses the FLASK_ENV environment variable.
-    Defaults to 'default' (which maps to DevelopmentConfig).
-    """
-    if config_name_str:
-        selected_config_name = config_name_str
-    else:
-        selected_config_name = os.environ.get('FLASK_ENV', 'default')
+def get_config(config_name=None):
+    if config_name is None:
+        config_name = os.getenv('FLASK_ENV', 'default')
 
-    config_class = config_by_name.get(selected_config_name)
-    if not config_class:
-        config_logger.warning(
-            f"Config name '{selected_config_name}' not found in config_by_name. Falling back to DevelopmentConfig."
-        )
-        config_class = DevelopmentConfig  # Fallback to a known default
+    config_obj = config_by_name.get(config_name)
+    if not config_obj:
+        print(f"Warning: Config name '{config_name}' not found in config_by_name. Falling back to 'default'.")
+        config_obj = config_by_name['default']
 
-    config_logger.info(
-        f"get_config: Selected configuration '{config_class.__name__}' based on input/env '{selected_config_name}'.")
-    return config_class
-
-
-# --- AppConfig for direct import if needed, though get_config is preferred ---
-# This will be evaluated when config.py is imported.
-try:
-    AppConfig = get_config()
-except Exception as e:
-    config_logger.critical(f"Failed to initialize AppConfig during import: {e}", exc_info=True)
-    # Fallback to a base config to prevent complete failure if AppConfig is directly imported elsewhere
-    # before the environment is fully set up for get_config (less likely with proper app factory).
-    AppConfig = DevelopmentConfig 
+    # Εκτύπωση για επιβεβαίωση ποια config φορτώνεται
+    # print(f"INFO (get_config): Loading configuration: {config_obj.__name__}")
+    return config_obj

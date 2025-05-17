@@ -1,7 +1,7 @@
 // frontend/src/services/companyAdminService.js
-import apiClient from '../api'; // Ο βασικός σου apiClient από το src/api.js
+import apiClient from '../api'; // Ο βασικός σου apiClient από το src/api.js - ΜΟΝΟ ΜΙΑ ΦΟΡΑ ΤΟ IMPORT
 
-const COMPANY_API_PREFIX = '/company'; // Το prefix όπως ορίζεται στο backend για τα company admin routes (μέσα στο /api/v1)
+const COMPANY_API_PREFIX = '/company'; // Το prefix όπως ορίζεται στο backend για τα company admin routes
 
 /**
  * Fetches a list of users for the currently authenticated company admin's company.
@@ -10,7 +10,6 @@ const COMPANY_API_PREFIX = '/company'; // Το prefix όπως ορίζεται 
  */
 export const getCompanyUsers = async (params = {}) => {
   try {
-    // Το URL θα είναι /api/v1/company/users
     const response = await apiClient.get(`${COMPANY_API_PREFIX}/users`, { params });
     return response.data;
   } catch (error) {
@@ -22,7 +21,6 @@ export const getCompanyUsers = async (params = {}) => {
 /**
  * Creates a new user (typically with 'user' role) for the company admin's company.
  * @param {object} userData - Data for the new user (username, email, password).
- *                           Role and company_id are usually set by the backend.
  * @returns {Promise<object>} A promise that resolves to the newly created user object.
  */
 export const createCompanyUser = async (userData) => {
@@ -53,11 +51,26 @@ export const toggleCompanyUserStatus = async (userId, isActive) => {
     throw err;
   }
   try {
-    // Το backend endpoint είναι /api/v1/company/users/{user_id}/status και περιμένει { "is_active": true/false }
     const response = await apiClient.put(`${COMPANY_API_PREFIX}/users/${userId}/status`, { is_active: isActive });
     return response.data;
   } catch (error) {
     console.error(`Error toggling status for user ID ${userId} (companyAdminService):`, error.response || error.message || error);
     throw error.response?.data || new Error(error.message || `Failed to toggle status for user ${userId}`);
+  }
+};
+
+/**
+ * Fetches a list of interviews for the company.
+ * Accessible by company admins or superadmins (if company_id is provided).
+ * @param {object} params - Optional query parameters (e.g., { page: 1, per_page: 15, status: 'SCHEDULED', company_id: X (for superadmin) })
+ * @returns {Promise<object>} A promise that resolves to an object containing interviews list and pagination info.
+ */
+export const getCompanyInterviews = async (params = {}) => {
+  try {
+    const response = await apiClient.get(`${COMPANY_API_PREFIX}/interviews`, { params });
+    return response.data;
+  } catch (error) {
+    console.error("Error fetching company interviews (companyAdminService):", error.response || error.message || error);
+    throw error.response?.data || new Error(error.message || "Failed to fetch company interviews");
   }
 };

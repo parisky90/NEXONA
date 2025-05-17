@@ -9,14 +9,14 @@ function AdminCompaniesPage() {
   const [newCompanyName, setNewCompanyName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // frontend/src/pages/AdminCompaniesPage.jsx
   const fetchCompaniesData = useCallback(async () => {
     setIsLoading(true);
-    setError('');
+    setError(''); // <--- ΚΑΘΑΡΙΣΕ ΤΟ ERROR ΠΡΙΝ ΤΟ FETCH
     try {
-      const data = await getCompanies();
-      setCompanies(data || []);
+      const data = await getCompanies(); // Αυτό επιστρέφEI { companies: [...], ...}
+      setCompanies(data.companies || []); // Χρησιμοποίησε το data.companies
     } catch (err) {
-      // Το err που έρχεται από το adminService είναι ήδη αντικείμενο { error: "message" } ή Error object
       setError(err.error || err.message || 'Failed to load companies.');
       setCompanies([]);
     } finally {

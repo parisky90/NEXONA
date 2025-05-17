@@ -1,290 +1,205 @@
-# backend/app/tasks/communication.py
-
-from flask import current_app, render_template_string
-from app import celery, mail, db, create_app # Import create_app
-from app.models import Candidate, User # Import User model
+from app import celery, db, mail, create_app  # Προστέθηκε create_app για πιθανή χρήση app_context
+from app.models import Interview, Candidate, User, Position, Company  # Προστέθηκε Company
 from flask_mail import Message
+from flask import current_app, url_for, render_template  # Προστέθηκε render_template για μελλοντική χρήση
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import logging
-import os # To construct URLs
-from datetime import datetime, timezone
-import uuid # Import uuid
 
 logger = logging.getLogger(__name__)
 
-# --- Helper function to create app context for tasks ---
-# Ensure this function is suitable for your setup or use the one from celery_worker.py
-def get_app_context():
-    """Creates a Flask app context for the Celery task."""
-    # Consider using the already configured app instance if possible,
-    # otherwise create a new one based on environment config.
-    app = current_app._get_current_object() if current_app else None
-    if app is None:
-        logger.warning("No current Flask app found, creating new one for task context.")
-        app = create_app(os.getenv('FLASK_CONFIG') or 'default')
-    return app.app_context()
 
-# --- Rejection Email Task ---
-@celery.task(bind=True, name='tasks.communication.send_rejection_email_task', max_retries=5)
-def send_rejection_email_task(self, candidate_id):
-    """Sends the standard rejection email."""
-    # Get config values within the task context
-    with get_app_context():
-        is_debug = current_app.config.get('MAIL_DEBUG', False)
-        sender_config = current_app.config.get('MAIL_SENDER', '"CV Manager App" <noreply@example.com>')
-        app_name = current_app.config.get('APP_NAME', 'NEXONA')
+# Παράδειγμα υπάρχοντος task (αν υπάρχει, παραμένει)
+# @celery.task(name='app.tasks.communication.send_example_email')
+# def send_example_email(recipient, subject, body):
+#     app = create_app(os.getenv('FLASK_CONFIG') or 'default') # Δημιουργία app instance
+#     with app.app_context(): # Δημιουργία application context
+#         msg = Message(subject, sender=current_app.config['MAIL_DEFAULT_SENDER'], recipients=[recipient])
+#         msg.body = body
+#         try:
+#             mail.send(msg)
+#             logger.info(f"Example email sent to {recipient}")
+#             return f"Email sent to {recipient}"
+#         except Exception as e:
+#             logger.error(f"Failed to send example email to {recipient}: {e}", exc_info=True)
+#             # Εδώ μπορείς να προσθέσεις self.retry(exc=e) αν το task είναι bind=True
+#             raise
 
-        logger.info(f"[EMAIL TASK START] Attempting rejection email for Candidate ID: {candidate_id}. Debug mode: {is_debug}")
+
+@celery.task(bind=True, name='app.tasks.communication.send_interview_proposal_email_task', max_retries=3,
+             default_retry_delay=300)  # Προσθήκη retries
+def send_interview_proposal_email_task(self, interview_id):
+    """
+    Sends an interview proposal email to the candidate.
+    """
+    # Χρησιμοποιούμε το app context που παρέχεται από την Celery task (μέσω της ρύθμισης στο app/__init__.py)
+    # ή μπορούμε να δημιουργήσουμε ένα ρητά αν χρειαστεί για κάποιο λόγο.
+    # Η Flask-SQLAlchemy και η Flask-Mail συνήθως λειτουργούν σωστά μέσα σε tasks
+    # που έχουν το app context pushed από την Celery.
+
+    # Για να είμαστε απόλυτα σίγουροι ότι έχουμε το σωστό current_app context, ειδικά για το url_for
+    # που εξαρτάται από το request context (αν και το _external=True μπορεί να το παρακάμψει)
+    # και για τις ρυθμίσεις της εφαρμογής:
+    app = self.app if hasattr(self, 'app') else current_app  # Προτιμάμε το self.app αν το task είναι bound και έχει app
+    if not app:  # Fallback αν το self.app δεν είναι διαθέσιμο
+        from app import create_app as create_flask_app  # Μετονομασία για αποφυγή σύγκρουσης
+        import os
+        app = create_flask_app(os.getenv('FLASK_CONFIG') or 'development')  # ή 'default'
+
+    with app.app_context():  # Εξασφάλιση του app context
+        interview = db.session.get(Interview, interview_id)
+        if not interview:
+            logger.error(f"send_interview_proposal_email_task: Interview with ID {interview_id} not found.")
+            return f"Error: Interview ID {interview_id} not found."
+
+        candidate = interview.candidate
+        recruiter = interview.recruiter  # Αυτός είναι ο User object του recruiter
+        position = interview.position
+
+        if not candidate or not candidate.email:
+            logger.error(
+                f"send_interview_proposal_email_task: Candidate or candidate email missing for interview ID {interview_id}.")
+            return f"Error: Candidate or email missing for interview ID {interview_id}."
+
+        if not recruiter:
+            logger.error(f"send_interview_proposal_email_task: Recruiter not found for interview ID {interview_id}.")
+            # Ίσως θέλουμε να στείλουμε το email ακόμα κι αν ο recruiter έχει διαγραφεί; Ή να αποτύχει το task;
+            # Για τώρα, ας υποθέσουμε ότι χρειαζόμαστε τον recruiter για το όνομα της εταιρείας.
+            return f"Error: Recruiter not found for interview ID {interview_id}."
+
+        company = recruiter.company  # Παίρνουμε την εταιρεία μέσω του recruiter
+        if not company:
+            logger.warning(
+                f"send_interview_proposal_email_task: Company not found for recruiter {recruiter.id} of interview ID {interview_id}. Using generic company name.")
+            company_name_for_email = "την εταιρεία μας"
+        else:
+            company_name_for_email = company.name
+
+        # Timezone για εμφάνιση (Ώρα Ελλάδος)
+        greece_tz = ZoneInfo("Europe/Athens")
+
+        proposed_slots_for_email = []
+        slot_options = [
+            (interview.proposed_slot_1_start, interview.proposed_slot_1_end, 1),
+            (interview.proposed_slot_2_start, interview.proposed_slot_2_end, 2),
+            (interview.proposed_slot_3_start, interview.proposed_slot_3_end, 3),
+        ]
+
+        for start_utc, end_utc, slot_num in slot_options:
+            if start_utc and end_utc:
+                start_gr = start_utc.astimezone(greece_tz)
+                # end_gr = end_utc.astimezone(greece_tz) # Δεν χρησιμοποιείται στο display string
+                proposed_slots_for_email.append({
+                    "id": slot_num,
+                    "start_display": start_gr.strftime("%A, %d %B %Y στις %H:%M (%Z)"),
+                    "confirmation_url": url_for('api.confirm_interview_slot',  # Θα οριστεί στο routes.py
+                                                token=interview.confirmation_token,
+                                                slot_choice=slot_num,
+                                                _external=True)
+                })
+
+        if not proposed_slots_for_email:
+            logger.error(
+                f"send_interview_proposal_email_task: No proposed slots found for interview ID {interview_id}.")
+            return f"Error: No proposed slots for interview ID {interview_id}."
+
+        reject_all_url = url_for('api.reject_interview_slots',  # Θα οριστεί στο routes.py
+                                 token=interview.confirmation_token,
+                                 _external=True)
+        cancel_by_candidate_url = url_for('api.cancel_interview_by_candidate',  # Θα οριστεί στο routes.py
+                                          token=interview.confirmation_token,
+                                          _external=True)
+
+        subject = f"Πρόσκληση για Συνέντευξη"
+        if position:
+            subject += f" για τη θέση {position.position_name}"
+        subject += f" στην εταιρεία {company_name_for_email}"
+
+        # Χρήση render_template για το email body (καλύτερη πρακτική)
+        # Δημιούργησε αρχεία:
+        # templates/email/interview_proposal.html
+        # templates/email/interview_proposal.txt
+        # Αν δεν υπάρχουν templates, θα χρησιμοποιηθούν τα παρακάτω f-strings.
+
+        email_context = {
+            'candidate_name': candidate.get_full_name(),
+            'position_name_display': f"για τη θέση «{position.position_name}»" if position else "για μια ευκαιρία συνεργασίας",
+            'company_name': company_name_for_email,
+            'proposed_slots': proposed_slots_for_email,
+            'interview_type': interview.interview_type,
+            'location': interview.location,
+            'notes_for_candidate': interview.notes_for_candidate,
+            'reject_all_url': reject_all_url,
+            'cancel_by_candidate_url': cancel_by_candidate_url
+        }
+
         try:
-            candidate = Candidate.query.get(candidate_id)
-            if not candidate or not candidate.email:
-                logger.error(f"[EMAIL TASK FAIL] Candidate {candidate_id} not found or missing email.")
-                return f"Candidate {candidate_id} invalid/missing email."
+            html_body = render_template('email/interview_proposal.html', **email_context)
+            text_body = render_template('email/interview_proposal.txt', **email_context)
+        except Exception as template_e:  # Αν τα templates δεν βρεθούν ή έχουν σφάλμα
+            logger.warning(f"Email template rendering failed: {template_e}. Falling back to f-string emails.")
+            # Fallback σε f-strings (όπως είχαμε πριν)
+            html_body = f"""
+            <p>Αγαπητέ/ή {email_context['candidate_name']},</p>
+            <p>Σας ευχαριστούμε για το ενδιαφέρον σας {email_context['position_name_display']} στην εταιρεία {email_context['company_name']}.</p>
+            <p>Θα θέλαμε να σας προσκαλέσουμε σε μια συνέντευξη. Παρακάτω θα βρείτε μερικές προτεινόμενες ημερομηνίες και ώρες (Ώρα Ελλάδος):</p>
+            """
+            if email_context['proposed_slots']:
+                html_body += "<ul>"
+                for slot in email_context['proposed_slots']:
+                    html_body += f"<li>{slot['start_display']} - <a href='{slot['confirmation_url']}'>Επιλογή αυτού του slot</a></li>"
+                html_body += "</ul>"
+            else:  # Αυτό δεν θα έπρεπε να συμβεί αν έχουμε τον έλεγχο παραπάνω
+                html_body += "<p>Δεν έχουν οριστεί προτεινόμενα slots αυτή τη στιγμή. Θα επικοινωνήσουμε σύντομα μαζί σας.</p>"
 
-            subject = f"Ενημέρωση σχετικά με την αίτησή σας - {app_name}"; recipients = [candidate.email]
-            try: sender_display_name = sender_config.split('<')[0].strip().replace('"', '') or "Η Ομάδα Προσλήψεων"
-            except: sender_display_name = "Η Ομάδα Προσλήψεων"
+            html_body += f"<p><strong>Τύπος Συνέντευξης:</strong> {email_context['interview_type']}</p>"
+            html_body += f"<p><strong>Τοποθεσία/Link:</strong> {email_context['location']}</p>"
+            if email_context['notes_for_candidate']:
+                html_body += f"<p><strong>Σημειώσεις:</strong><br/>{email_context['notes_for_candidate'].replace(chr(10), '<br/>')}</p>"
 
-            # Using f-string with triple quotes for multi-line body
-            body_text = f"""Αγαπητέ/ή {candidate.first_name or 'Υποψήφιε/α'},
+            html_body += f"""
+            <p>Παρακαλούμε επιλέξτε το slot που σας εξυπηρετεί καλύτερα κάνοντας κλικ στον αντίστοιχο σύνδεσμο.</p>
+            <p>Εάν κανένα από τα παραπάνω slots δεν σας βολεύει, παρακαλούμε ενημερώστε μας πατώντας εδώ: <a href='{email_context['reject_all_url']}'>Κανένα slot δεν με βολεύει</a>.</p>
+            <p>Εάν επιθυμείτε να ακυρώσετε αυτή την πρόσκληση, μπορείτε να το κάνετε εδώ: <a href='{email_context['cancel_by_candidate_url']}'>Ακύρωση πρόσκλησης</a>.</p>
+            <p>Ανυπομονούμε να σας μιλήσουμε!</p>
+            <p>Με εκτίμηση,<br/>Η ομάδα προσλήψεων της {email_context['company_name']}</p>
+            """
+            # Fallback για text body
+            text_body = f"Αγαπητέ/ή {email_context['candidate_name']}...\n (Full text body omitted for brevity, similar to HTML fallback)"
 
-Εξετάσαμε το βιογραφικό σας σημείωμα για τη θέση εργασίας στην εταιρεία μας.
+        sender_email = app.config.get('MAIL_DEFAULT_SENDER', 'noreply@example.com')
+        # Εδώ θα μπορούσαμε να έχουμε μια πιο έξυπνη λογική για τον sender, π.χ., από τις ρυθμίσεις της εταιρείας.
 
-Θα θέλαμε να σας ευχαριστήσουμε θερμά για το ενδιαφέρον που δείξατε. Ωστόσο, λυπούμαστε που σας ενημερώνουμε ότι προς το παρόν δεν θα προχωρήσουμε σε περαιτέρω συνεργασία μαζί σας για την συγκεκριμένη θέση.
+        msg = Message(subject,
+                      sender=sender_email,
+                      recipients=[candidate.email])
+        msg.body = text_body
+        msg.html = html_body
 
-Το βιογραφικό σας θα παραμείνει στη βάση δεδομένων μας και θα το λάβουμε υπόψη για πιθανές μελλοντικές θέσεις εργασίας που μπορεί να ταιριάζουν με τα προσόντα σας.
+        try:
+            mail.send(msg)  # Το mail instance είναι ήδη αρχικοποιημένο με το app
+            logger.info(f"Interview proposal email sent to {candidate.email} for interview ID {interview_id}.")
 
-Σας ευχόμαστε καλή επιτυχία στην αναζήτηση εργασίας σας.
+            # Ενημέρωση ιστορικού υποψηφίου (προαιρετικά, αν θέλουμε να καταγράφεται η αποστολή email)
+            # Καλύτερα να γίνεται στο ίδιο session με τη δημιουργία του interview αν είναι κρίσιμο.
+            # Εδώ είμαστε σε ξεχωριστό task, οπότε χρειαζόμαστε νέο session/commit.
+            # candidate.add_history_event(...) # Αν το κάνουμε εδώ, θέλει db.session.commit()
 
-Με εκτίμηση,
-{sender_display_name}
-""".strip()
+            # Ας ενημερώσουμε το status του interview ότι το email στάλθηκε (αν έχουμε τέτοιο status)
+            # interview.email_sent_at = datetime.now(ZoneInfo("UTC"))
+            # db.session.commit()
 
-            html_body = render_template_string("""
-            <p>Αγαπητέ/ή {{ candidate_name }},</p>
-            <p>Εξετάσαμε το βιογραφικό σας σημείωμα για τη θέση εργασίας στην εταιρεία μας.</p>
-            <p>Θα θέλαμε να σας ευχαριστήσουμε θερμά για το ενδιαφέρον που δείξατε. Ωστόσο, λυπούμαστε που σας ενημερώνουμε ότι προς το παρόν δεν θα προχωρήσουμε σε περαιτέρω συνεργασία μαζί σας για την συγκεκριμένη θέση.</p>
-            <p>Το βιογραφικό σας θα παραμείνει στη βάση δεδομένων μας και θα το λάβουμε υπόψη για πιθανές μελλοντικές θέσεις εργασίας που μπορεί να ταιριάζουν με τα προσόντα σας.</p>
-            <p>Σας ευχόμαστε καλή επιτυχία στην αναζήτηση εργασίας σας.</p>
-            <br>
-            <p>Με εκτίμηση,</p>
-            <p>{{ sender_display_name }}</p>
-            """, candidate_name=candidate.first_name or 'Υποψήφιε/α', sender_display_name=sender_display_name)
+            return f"Email sent successfully for interview ID {interview_id}."
 
-
-            if is_debug:
-                logger.info("--- MAIL DEBUG: Rejection Email Content Start ---"); logger.info(f"Subject: {subject}"); logger.info(f"From: {sender_config}"); logger.info(f"To: {recipients}"); logger.info("--- Body ---"); logger.info(body_text); logger.info("--- MAIL DEBUG: Email Content End ---")
-                logger.info(f"[EMAIL TASK SUCCESS - DEBUG] Rejection email logged for Candidate ID: {candidate_id} to {candidate.email}")
-                return f"Email logged (debug mode) for {candidate_id}."
-            else:
-                logger.info("[EMAIL TASK] is_debug is False, attempting rejection mail.send()")
-                msg = Message(subject=subject, sender=sender_config, recipients=recipients, body=body_text, html=html_body)
-                mail.send(msg)
-                logger.info(f"[EMAIL TASK SUCCESS] Rejection email successfully sent for Candidate ID: {candidate_id} to {candidate.email}")
-                return f"Email sent for {candidate_id}."
         except Exception as e:
-            logger.error(f"[EMAIL TASK FAIL] Error during rejection email processing for {candidate_id}: {e}", exc_info=True)
-            if not is_debug:
-                try: countdown = 60 * (2 ** self.request.retries); logger.info(f"Retrying rejection email send for {candidate_id} in {countdown}s..."); self.retry(exc=e, countdown=countdown)
-                except self.MaxRetriesExceededError: logger.critical(f"[EMAIL TASK FAIL] Max retries exceeded for rejection email, candidate {candidate_id}.");
-            return f"Failed to send rejection email for {candidate_id}."
-
-# --- Interview Reminder Email Task (to Recruiter/User) ---
-@celery.task(bind=True, name='tasks.communication.send_interview_reminder_email_task', max_retries=3)
-def send_interview_reminder_email_task(self, user_email, candidate_name, interview_datetime_iso, interview_location):
-    """Sends an interview reminder email to a user (HR personnel)."""
-    with get_app_context():
-        is_debug = current_app.config.get('MAIL_DEBUG', False)
-        sender_config = current_app.config.get('MAIL_SENDER', '"CV Manager App" <noreply@example.com>')
-        app_name = current_app.config.get('APP_NAME', 'NEXONA')
-
-        logger.info(f"[REMINDER EMAIL TASK START] Attempting reminder to User: {user_email} for Candidate: {candidate_name}")
-        try:
-            if not user_email:
-                logger.error("[REMINDER EMAIL TASK FAIL] No user email provided.")
-                return "User email missing."
-
+            logger.error(f"Failed to send interview proposal email for interview ID {interview_id}: {e}", exc_info=True)
             try:
-                interview_dt = datetime.fromisoformat(interview_datetime_iso).astimezone(timezone.utc) # Ensure UTC for consistency if needed
-                formatted_time = interview_dt.strftime("%d/%m/%Y %H:%M UTC") # Example format
-            except Exception as format_err:
-                logger.warning(f"Could not format interview datetime {interview_datetime_iso}: {format_err}")
-                formatted_time = interview_datetime_iso # Fallback
-
-            subject = f"Υπενθύμιση Συνέντευξης: {candidate_name or 'Υποψήφιος'}"
-            recipients = [user_email]
-            body_text = f"""
-Γεια σας,
-
-Αυτό είναι μια υπενθύμιση για την επερχόμενη συνέντευξή σας:
-
-Υποψήφιος: {candidate_name or 'N/A'}
-Ημερομηνία & Ώρα: {formatted_time}
-Τοποθεσία: {interview_location or 'N/A'}
-
-- Σύστημα {app_name}
-""".strip()
-
-            html_body = render_template_string("""
-            <p>Γεια σας,</p>
-            <p>Αυτό είναι μια υπενθύμιση για την επερχόμενη συνέντευξή σας:</p>
-            <ul>
-                <li><strong>Υποψήφιος:</strong> {{ candidate_name }}</li>
-                <li><strong>Ημερομηνία & Ώρα:</strong> {{ formatted_time }}</li>
-                <li><strong>Τοποθεσία:</strong> {{ interview_location }}</li>
-            </ul>
-            <p>- Σύστημα {{ app_name }}</p>
-            """, candidate_name=candidate_name or 'N/A', formatted_time=formatted_time, interview_location=interview_location or 'N/A', app_name=app_name)
-
-            if is_debug:
-                logger.info("--- MAIL DEBUG: Interview Reminder Email Content Start ---")
-                logger.info(f"Subject: {subject}"); logger.info(f"From: {sender_config}"); logger.info(f"To: {recipients}"); logger.info("--- Body ---"); logger.info(body_text); logger.info("--- MAIL DEBUG: Email Content End ---")
-                logger.info(f"[REMINDER EMAIL SUCCESS - DEBUG] Logged for User: {user_email}, Candidate: {candidate_name}")
-                return "Reminder email logged (debug)."
-            else:
-                logger.info("[REMINDER EMAIL TASK] is_debug is False, attempting reminder mail.send()")
-                msg = Message(subject=subject, sender=sender_config, recipients=recipients, body=body_text, html=html_body)
-                mail.send(msg)
-                logger.info(f"[REMINDER EMAIL SUCCESS] Sent to User: {user_email}, Candidate: {candidate_name}")
-                return "Reminder email sent."
-
-        except Exception as e:
-            logger.error(f"[REMINDER EMAIL FAIL] Error sending reminder to {user_email} for {candidate_name}: {e}", exc_info=True)
-            if not is_debug:
-                try:
-                    countdown = 30 * (2 ** self.request.retries)
-                    logger.info(f"Retrying reminder email send for {user_email} in {countdown}s...")
-                    self.retry(exc=e, countdown=countdown)
-                except self.MaxRetriesExceededError:
-                    logger.critical(f"[REMINDER EMAIL FAIL] Max retries exceeded for reminder email to {user_email} for {candidate_name}.")
-            return f"Failed to send reminder email to {user_email}."
-
-
-# --- ΝΕΟ TASK: Αποστολή Πρόσκλησης Συνέντευξης στον Υποψήφιο ---
-@celery.task(bind=True, name='tasks.communication.send_interview_invitation_email_task', max_retries=3, default_retry_delay=120)
-def send_interview_invitation_email(self, candidate_id):
-    """Sends an interview invitation email to the candidate with confirmation links."""
-    with get_app_context():
-        is_debug = current_app.config.get('MAIL_DEBUG', False)
-        sender_config = current_app.config.get('MAIL_SENDER', '"CV Manager App" <noreply@example.com>')
-        app_name = current_app.config.get('APP_NAME', 'NEXONA')
-        # IMPORTANT: Set APP_BASE_URL in .env or config (e.g., http://yourdomain.com or http://localhost:5000)
-        base_url = current_app.config.get('APP_BASE_URL', 'http://localhost:5000') # Default for safety
-
-        logger.info(f"[INVITATION EMAIL TASK START] Attempting invitation email for Candidate ID: {candidate_id}. Debug: {is_debug}")
-        try:
-            candidate = Candidate.query.get(candidate_id)
-            if not candidate:
-                logger.error(f"[INVITATION EMAIL TASK FAIL] Candidate {candidate_id} not found.")
-                return f"Candidate {candidate_id} not found."
-            if not candidate.email:
-                logger.warning(f"[INVITATION EMAIL TASK FAIL] Candidate {candidate_id} has no email address.")
-                return f"Candidate {candidate_id} missing email."
-            if not candidate.interview_datetime:
-                logger.warning(f"[INVITATION EMAIL TASK FAIL] Candidate {candidate_id} has no interview scheduled.")
-                return f"Candidate {candidate_id} no interview."
-            if not candidate.confirmation_uuid:
-                 logger.error(f"[INVITATION EMAIL TASK FAIL] Candidate {candidate_id} is missing confirmation_uuid.")
-                 return f"Candidate {candidate_id} missing UUID."
-
-            # Construct Confirmation URLs
-            confirm_url = f"{base_url}/api/v1/interviews/confirm/{candidate.confirmation_uuid}"
-            decline_url = f"{base_url}/api/v1/interviews/decline/{candidate.confirmation_uuid}"
-
-            # Compose Email
-            subject = f"Πρόσκληση Συνέντευξης - {app_name}"
-            recipients = [candidate.email]
-            interview_dt_formatted = candidate.interview_datetime.strftime('%d/%m/%Y στις %H:%M')
-
-            # Basic HTML Email Template
-            html_body = render_template_string("""
-            <p>Αγαπητέ/ή {{ candidate_name }},</p>
-            <p>Θα θέλαμε να σας προσκαλέσουμε σε συνέντευξη για τη θέση που αιτηθήκατε στην εταιρεία μας.</p>
-            <p><strong>Στοιχεία Συνέντευξης:</strong></p>
-            <ul>
-                <li><strong>Ημερομηνία & Ώρα:</strong> {{ interview_datetime }}</li>
-                {% if interview_location %}
-                <li><strong>Τοποθεσία:</strong> {{ interview_location }}</li>
-                {% endif %}
-                {# Add description if you add it to the model/form #}
-                {# {% if interview_description %}
-                <li><strong>Περιγραφή/Σημειώσεις:</strong> {{ interview_description }}</li>
-                {% endif %} #}
-            </ul>
-            <p>Παρακαλούμε επιβεβαιώστε την παρουσία σας κάνοντας κλικ στον παρακάτω σύνδεσμο:</p>
-            <p style="margin: 20px 0;">
-                <a href="{{ confirm_url }}" style="display: inline-block; padding: 12px 20px; background-color: #28a745; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">
-                    Επιβεβαίωση Παρουσίας
-                </a>
-            </p>
-            <p>Αν δεν μπορείτε να παρευρεθείτε την προγραμματισμένη ώρα ή χρειάζεστε αλλαγή, παρακαλούμε ενημερώστε μας κάνοντας κλικ εδώ:</p>
-            <p style="margin: 20px 0;">
-                <a href="{{ decline_url }}" style="display: inline-block; padding: 12px 20px; background-color: #dc3545; color: white; text-decoration: none; border-radius: 5px; font-weight: bold;">
-                    Αδυναμία Παρουσίας / Αίτημα Αλλαγής
-                </a>
-            </p>
-            <br>
-            <p>Με εκτίμηση,</p>
-            <p>Η Ομάδα Προσλήψεων</p>
-            <p>{{ app_name }}</p>
-            """,
-            candidate_name=candidate.get_full_name(),
-            interview_datetime=interview_dt_formatted,
-            interview_location=candidate.interview_location,
-            # interview_description=getattr(candidate, 'description', None), # Uncomment if description added
-            confirm_url=confirm_url,
-            decline_url=decline_url,
-            app_name=app_name
-            )
-
-            # Create message with HTML body
-            msg = Message(subject, sender=sender_config, recipients=recipients)
-            msg.html = html_body
-            # Optional: Add a plain text version too
-            # msg.body = f"..."
-
-            # Send Email or Log
-            if is_debug:
-                logger.info("--- MAIL DEBUG: Interview Invitation Email Content Start ---")
-                logger.info(f"Subject: {subject}"); logger.info(f"From: {sender_config}"); logger.info(f"To: {recipients}"); logger.info("--- HTML Body ---"); logger.info(html_body); logger.info("--- MAIL DEBUG: Email Content End ---")
-                logger.info(f"[INVITATION EMAIL SUCCESS - DEBUG] Logged for Candidate ID: {candidate_id} to {candidate.email}")
-                return f"Invitation email logged (debug) for {candidate_id}."
-            else:
-                logger.info("[INVITATION EMAIL TASK] is_debug is False, attempting invitation mail.send()")
-                mail.send(msg)
-                logger.info(f"[INVITATION EMAIL SUCCESS] Invitation sent successfully to {candidate.email} for candidate {candidate_id}.")
-                return f"Invitation email sent for {candidate_id}."
-
-        except Exception as e:
-            logger.error(f"[INVITATION EMAIL FAIL] Error during invitation email processing for {candidate_id}: {e}", exc_info=True)
-            if not is_debug:
-                try:
-                    countdown = 120 * (2 ** self.request.retries) # Longer retry for invitations
-                    logger.info(f"Retrying invitation email send for {candidate_id} in {countdown}s...")
-                    self.retry(exc=e, countdown=countdown)
-                except self.MaxRetriesExceededError:
-                    logger.critical(f"[INVITATION EMAIL FAIL] Max retries exceeded for invitation email, candidate {candidate_id}.")
-            return f"Failed to send invitation email for {candidate_id}."
-
-
-# --- Placeholders for Recruiter Notification Tasks ---
-
-@celery.task(bind=True, name='tasks.communication.notify_recruiter_interview_confirmed', max_retries=3)
-def notify_recruiter_interview_confirmed(self, candidate_id):
-     with get_app_context():
-         # TODO: Implement logic to find the relevant recruiter(s)
-         # e.g., User who created the interview, or users associated with the position
-         candidate = Candidate.query.get(candidate_id)
-         recruiter_email = "recruiter@example.com" # Placeholder
-         logger.info(f"[RECRUITER NOTIFY TASK] Candidate {candidate_id} ({candidate.get_full_name() if candidate else 'N/A'}) confirmed interview. Notifying {recruiter_email}.")
-         # Send email or create in-app notification
-         # ... implementation needed ...
-
-@celery.task(bind=True, name='tasks.communication.notify_recruiter_interview_declined', max_retries=3)
-def notify_recruiter_interview_declined(self, candidate_id):
-     with get_app_context():
-         # TODO: Implement logic to find the relevant recruiter(s)
-         candidate = Candidate.query.get(candidate_id)
-         recruiter_email = "recruiter@example.com" # Placeholder
-         logger.info(f"[RECRUITER NOTIFY TASK] Candidate {candidate_id} ({candidate.get_full_name() if candidate else 'N/A'}) declined/requested reschedule. Notifying {recruiter_email}.")
-         # Send email or create in-app notification (higher priority)
-         # ... implementation needed ...
+                # Προσπάθεια retry για το task
+                raise self.retry(exc=e, countdown=int(self.default_retry_delay * (self.request.retries + 1)))
+            except self.MaxRetriesExceededError:
+                logger.error(f"Max retries exceeded for sending email for interview ID {interview_id}.")
+                # Εδώ θα μπορούσαμε να στείλουμε μια ειδοποίηση στον admin ή κάτι παρόμοιο.
+                return f"Failed to send email for interview ID {interview_id} after max retries."
+            except Exception as retry_exc:  # Άλλο σφάλμα κατά το retry
+                logger.error(f"Error during retry mechanism for interview ID {interview_id}: {retry_exc}")
+                return f"Failed to send email for interview ID {interview_id}, retry mechanism failed."

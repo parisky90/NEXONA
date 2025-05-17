@@ -1,201 +1,226 @@
 # backend/app/__init__.py
-from flask import Flask
+import os
+from flask import Flask, jsonify, request, current_app as flask_current_app
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
-from flask_cors import CORS
+from flask_login import LoginManager, current_user  # Πρόσθεσε current_user εδώ αν δεν υπάρχει ήδη
 from flask_mail import Mail
-from flask_login import LoginManager
+from flask_cors import CORS
 from celery import Celery, Task
 import logging
-import os
-import sys
+from logging.handlers import RotatingFileHandler
 
 try:
-    from .config import get_config, AppConfig  # Χρησιμοποιούμε σχετικό import
-except ImportError as e:
-    sys.stderr.write(f"CRITICAL ERROR in app/__init__.py: Could not import '.config'. Ensure app/config.py exists.\n")
-    sys.stderr.write(f"Python sys.path: {sys.path}\n")
-    sys.stderr.write(f"Error details: {e}\n")
-    raise
+    from .config import get_config
+except ImportError:
+    from config import get_config
+
+    print("Warning: Imported 'get_config' from top-level 'config'. Ensure 'app/config.py' is used if it exists.")
 
 db = SQLAlchemy()
 migrate = Migrate()
-cors = CORS()
-mail = Mail()
 login_manager = LoginManager()
-login_manager.login_view = 'api.login'  # Προσαρμόστε αν το endpoint του login είναι διαφορετικό
+# login_manager.login_view = 'api.login' # Θα το χειριστούμε με το unauthorized_handler
 login_manager.session_protection = "strong"
 
-celery = Celery(__name__,
-                include=['tasks.parsing',
-                         'tasks.communication',
-                         'tasks.reminders'])
+
+# --- ΝΕΑ ΣΥΝΑΡΤΗΣΗ ΓΙΑ ΧΕΙΡΙΣΜΟ UNAUTHORIZED ---
+@login_manager.unauthorized_handler
+def unauthorized():
+    # Όταν το @login_required αποτύχει, αντί για redirect, επέστρεψε 401 JSON
+    # Αυτό είναι πιο κατάλληλο για APIs και SPAs.
+    # Το frontend θα πρέπει να χειριστεί το 401 (π.χ., ανακατεύθυνση στη σελίδα login).
+    flask_current_app.logger.warning(f"Unauthorized access attempt to: {request.path}")
+    return jsonify(error="Unauthorized", message="Authentication is required to access this resource."), 401
+
+
+# --- ΤΕΛΟΣ ΝΕΑΣ ΣΥΝΑΡΤΗΣΗΣ ---
+
+mail = Mail()
+cors = CORS()
+
+from .services.s3_service import S3Service
+
+s3_service_instance = S3Service()
+
+celery = Celery()
+
+from .models import User
 
 
 @login_manager.user_loader
 def load_user(user_id):
-    from app.models import User
+    logger_instance = flask_current_app.logger if flask_current_app else logging.getLogger(__name__)
     try:
-        return User.query.get(int(user_id))
-    except ValueError:
-        logging.getLogger(__name__).warning(f"load_user: Invalid user_id format: {user_id}")
-        return None
+        user_id_int = int(user_id)
+        user = db.session.get(User, user_id_int)
+        return user
     except Exception as e:
-        logging.getLogger(__name__).error(f"Error loading user {user_id}: {e}", exc_info=True)
+        logger_instance.error(f"Error loading user {user_id}: {e}", exc_info=True)
         return None
 
 
-def create_app(config_name_or_class=None):
-    app = Flask(__name__)
+def make_celery(app_instance):
+    class ContextTask(Task):
+        def __call__(self, *args, **kwargs):
+            with app_instance.app_context():
+                return self.run(*args, **kwargs)
 
-    if isinstance(config_name_or_class, str):
-        chosen_config_obj = get_config(config_name_or_class)
-    elif config_name_or_class is not None and not isinstance(config_name_or_class, str):
-        chosen_config_obj = config_name_or_class
-    else:
-        chosen_config_obj = get_config()
-
-    app.config.from_object(chosen_config_obj)
-
-    startup_logger_name = f"{app.name}.startup"
-    startup_logger = logging.getLogger(startup_logger_name)
-    if not startup_logger.handlers:
-        startup_logger.setLevel(logging.INFO)
-        startup_handler = logging.StreamHandler(sys.stdout)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        startup_handler.setFormatter(formatter)
-        startup_logger.addHandler(startup_handler)
-        startup_logger.propagate = False
-
+    global celery
+    celery.conf.broker_url = app_instance.config['CELERY_BROKER_URL']
+    celery.conf.result_backend = app_instance.config['CELERY_RESULT_BACKEND']
+    celery.conf.update(app_instance.config)
+    celery.Task = ContextTask
     try:
-        db_uri = app.config.get('SQLALCHEMY_DATABASE_URI', 'NOT SET')
-        masked_db_uri = db_uri
-        if isinstance(db_uri, str) and "@" in db_uri:
-            parts = db_uri.split('@', 1)
-            if "://" in parts[0]:
-                protocol_user_pass = parts[0].split("://", 1)
-                if len(protocol_user_pass) > 1 and ":" in protocol_user_pass[1]:
-                    user, _ = protocol_user_pass[1].split(":", 1)
-                    masked_db_uri = f"{protocol_user_pass[0]}://{user}:********@{parts[1]}"
+        celery.autodiscover_tasks(['tasks'], related_name=None, force=True)  # Άλλαξα το app.tasks σε tasks
+        app_instance.logger.info("Celery autodiscover_tasks configured for 'tasks' package.")
+    except Exception as e:
+        app_instance.logger.error(f"Error during Celery autodiscover_tasks: {e}", exc_info=True)
+    app_instance.extensions['celery'] = celery
+    return celery
 
-        startup_logger.info(f"NEXONA APP STARTUP (app/__init__.py via create_app):")
-        startup_logger.info(f"  Config Loaded: {chosen_config_obj.__name__}")
-        startup_logger.info(f"  DEBUG Mode: {app.config.get('DEBUG')}")
-        startup_logger.info(f"  SQLALCHEMY_DATABASE_URI: {masked_db_uri}")
-        startup_logger.info(
-            f"  MAIL_DEBUG: {app.config.get('MAIL_DEBUG')}, MAIL_SUPPRESS_SEND: {app.config.get('MAIL_SUPPRESS_SEND')}")
-        startup_logger.info(f"  CELERY_BROKER_URL: {app.config.get('CELERY_BROKER_URL')}")
-    except Exception as log_err:
-        sys.stderr.write(f"Warning: Error during startup config logging: {log_err}\n")
 
-    if not app.debug and not app.testing:
-        if not app.logger.handlers:
-            stream_handler = logging.StreamHandler(sys.stdout)
-            stream_handler.setFormatter(logging.Formatter(
-                '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
-            ))
-            app.logger.addHandler(stream_handler)
-        app.logger.setLevel(logging.INFO)
+def setup_logging(app_instance):
+    log_level_str = app_instance.config.get('LOG_LEVEL', 'INFO').upper()
+    log_level = getattr(logging, log_level_str, logging.INFO)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    log_dir = os.path.join(project_root, 'logs')
+
+    for handler in list(app_instance.logger.handlers):
+        app_instance.logger.removeHandler(handler)
+
+    if not app_instance.debug and not app_instance.testing:
+        if not os.path.exists(log_dir):
+            try:
+                os.makedirs(log_dir, exist_ok=True)
+            except OSError as e:
+                console_fallback_handler = logging.StreamHandler()
+                console_fallback_handler.setFormatter(
+                    logging.Formatter('%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
+                app_instance.logger.addHandler(console_fallback_handler)
+                app_instance.logger.error(f"Could not create log directory {log_dir}: {e}. Logging to stderr.")
+                app_instance.logger.setLevel(log_level)
+                return
+
+        if os.path.exists(log_dir):
+            file_handler = RotatingFileHandler(os.path.join(log_dir, 'nexona_app.log'), maxBytes=102400, backupCount=10)
+            file_handler.setFormatter(
+                logging.Formatter('%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'))
+            file_handler.setLevel(log_level)
+            app_instance.logger.addHandler(file_handler)
+            app_instance.logger.info('NEXONA application logging to file initialized.')
+        else:
+            app_instance.logger.warning(f"Log directory {log_dir} still not available. Logging to stderr.")
     else:
-        if not app.logger.handlers:
-            stream_handler = logging.StreamHandler(sys.stdout)
-            stream_handler.setFormatter(logging.Formatter(
-                '%(asctime)s DEBUG: %(message)s [in %(pathname)s:%(lineno)d]'
-            ))
-            app.logger.addHandler(stream_handler)
-        app.logger.setLevel(logging.DEBUG)
+        if not app_instance.logger.handlers:
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(logging.Formatter(
+                '%(asctime)s %(levelname)s %(name)s [%(module)s.%(funcName)s:%(lineno)d]: %(message)s'))
+            app_instance.logger.addHandler(console_handler)
+        app_instance.logger.info('NEXONA application console logging for development/debug initialized.')
+    app_instance.logger.setLevel(log_level)
 
-    app.logger.info('NEXONA Application Starting Up (Flask app logger)...')
+
+def create_app(config_name_from_env=None):
+    backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    templates_dir = os.path.join(backend_root, 'templates')
+    app = Flask(__name__, instance_relative_config=False, template_folder=templates_dir)
+    effective_config_name = config_name_from_env or os.getenv('FLASK_ENV') or 'development'
+    selected_config_obj = get_config(effective_config_name)
+
+    if selected_config_obj is None:
+        print(f"CRITICAL: Configuration '{effective_config_name}' not found. Using minimal fallback.")
+        app.config.from_mapping(
+            SECRET_KEY=os.getenv('SECRET_KEY', 'fallback_secret_key_for_testing_only_123!'),
+            SQLALCHEMY_TRACK_MODIFICATIONS=False,
+            SQLALCHEMY_DATABASE_URI=os.getenv('DATABASE_URL', 'sqlite:///./default_fallback_app.db'),
+            CELERY_BROKER_URL=os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0'),
+            CELERY_RESULT_BACKEND=os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0'),
+            LOG_LEVEL='DEBUG',
+            CORS_ORIGINS='*'
+        )
+    else:
+        app.config.from_object(selected_config_obj)
+
+    setup_logging(app)
+    app.logger.info(f"NEXONA APP STARTUP (app/__init__.py via create_app):")
+    app.logger.info(
+        f"  Config Loaded: {selected_config_obj.__name__ if selected_config_obj else 'Minimal Fallback Config'}")
+    # ... (τα υπόλοιπα logs για config)
 
     db.init_app(app)
     migrate.init_app(app, db)
+    login_manager.init_app(app)  # Το unauthorized_handler θα χρησιμοποιηθεί τώρα
+    mail.init_app(app)
 
     cors_origins_config = app.config.get('CORS_ORIGINS', '*')
-    if isinstance(cors_origins_config, str) and ',' in cors_origins_config:
-        effective_cors_origins = [o.strip() for o in cors_origins_config.split(',')]
-    elif isinstance(cors_origins_config, str) and cors_origins_config != '*':
-        effective_cors_origins = [cors_origins_config]
+    if isinstance(cors_origins_config, str) and cors_origins_config != '*':
+        actual_cors_origins = [origin.strip() for origin in cors_origins_config.split(',')]
+    elif isinstance(cors_origins_config, list):
+        actual_cors_origins = cors_origins_config
     else:
-        effective_cors_origins = cors_origins_config
+        actual_cors_origins = "*"
+    cors.init_app(app, resources={r"/api/v1/*": {"origins": actual_cors_origins}}, supports_credentials=True)
+    app.logger.info(f"CORS initialized for /api/v1/* with origins: {actual_cors_origins}")
 
-    cors.init_app(app,
-                  supports_credentials=app.config.get('CORS_SUPPORTS_CREDENTIALS', True),
-                  origins=effective_cors_origins,
-                  expose_headers=app.config.get('CORS_EXPOSE_HEADERS', ["Content-Type", "X-CSRFToken"]))
+    s3_service_instance.init_app(app)
+    make_celery(app)
 
-    mail.init_app(app)
-    login_manager.init_app(app)
-
-    celery_config_updates = {
-        'broker_url': app.config['CELERY_BROKER_URL'],
-        'result_backend': app.config['CELERY_RESULT_BACKEND'],
-        'task_always_eager': app.config.get('CELERY_TASK_ALWAYS_EAGER', False),
-        'task_eager_propagates': app.config.get('CELERY_TASK_EAGER_PROPAGATES', False),
-        'beat_schedule': {
-            'check-interview-reminders-every-minute': {
-                'task': 'tasks.reminders.check_upcoming_interviews',
-                'schedule': 60.0,
-            },
-        },
-        'timezone': app.config.get('CELERY_TIMEZONE', 'UTC')
-    }
-    celery.conf.update(**celery_config_updates)
-
-    class ContextTask(Task):
-        abstract = True
-
-        def __call__(self, *args, **kwargs):
-            with app.app_context():
-                return self.run(*args, **kwargs)
-
-    celery.Task = ContextTask
-
-    # --- Register Blueprints ---
-    # Τροποποίηση στον τρόπο που γίνονται import τα blueprints από το app.api sub-package
-
-    # Κάνουμε import τα blueprints από το app.api package,
-    # όπου το app/api/__init__.py τα έχει κάνει διαθέσιμα.
     try:
-        from app.api import bp as main_api_bp  # Το bp από το app.api.routes (μέσω του app.api.__init__)
-        from app.api import admin_bp as admin_api_bp_imported  # Το admin_bp από το app.api.routes_admin
-        from app.api import \
-            company_admin_bp as company_admin_bp_imported  # Το company_admin_bp από το app.api.routes_company_admin
+        from .api.routes import bp as main_api_bp
+        from .api.routes_admin import admin_bp
+        from .api.routes_company_admin import company_admin_bp
 
-        app.register_blueprint(main_api_bp, url_prefix='/api/v1')
+        if main_api_bp:
+            app.register_blueprint(main_api_bp)
+            app.logger.info(f"Registered main_api_bp with effective prefix: {main_api_bp.url_prefix}")
+        else:
+            app.logger.error("main_api_bp not loaded or defined.")
+        if admin_bp:
+            app.register_blueprint(admin_bp)
+            app.logger.info(f"Registered admin_bp with effective prefix: {admin_bp.url_prefix}")
+        else:
+            app.logger.error("admin_bp not loaded or defined.")
+        if company_admin_bp:
+            app.register_blueprint(company_admin_bp)
+            app.logger.info(f"Registered company_admin_bp with effective prefix: {company_admin_bp.url_prefix}")
+        else:
+            app.logger.error("company_admin_bp not loaded or defined.")
+    except ImportError as e_bp:
+        app.logger.critical(f"Failed to import blueprints for registration: {e_bp}", exc_info=True)
+    except Exception as e_reg:
+        app.logger.critical(f"An unexpected error occurred during blueprint registration: {e_reg}", exc_info=True)
 
-        # Το admin_bp έχει ήδη url_prefix='/admin' στον ορισμό του στο routes_admin.py,
-        # οπότε δεν χρειάζεται να το ορίσουμε ξανά εδώ.
-        app.register_blueprint(admin_api_bp_imported)
+    @app.errorhandler(404)
+    def not_found_error(error):
+        app.logger.warning(f"404 Not Found: {request.path} (Accept: {request.accept_mimetypes})")
+        if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html:
+            return jsonify(error="Not found",
+                           message=f"The requested URL {request.path} was not found on this server."), 404
+        return jsonify(error="Resource not found (404). Please check the URL."), 404
 
-        # Το company_admin_bp ΔΕΝ έχει prefix στον ορισμό του (στο routes_company_admin.py),
-        # οπότε το βάζουμε εδώ.
-        app.register_blueprint(company_admin_bp_imported, url_prefix='/api/v1')  # Τελικά URLs: /api/v1/company/...
+    @app.errorhandler(401)
+    def unauthorized_error_handler_app(error):  # Διαφορετικό όνομα από το login_manager.unauthorized_handler
+        app.logger.warning(f"App-level 401 Unauthorized: {request.path}")
+        return jsonify(error="Unauthorized", message="Authentication is required to access this resource."), 401
 
-    except ImportError as bp_import_error:
-        # Αυτό θα μας βοηθήσει να δούμε αν υπάρχει πρόβλημα με το app/api/__init__.py
-        # ή με τα αρχεία routes μέσα στο app/api/
-        startup_logger.critical(f"Failed to import blueprints from app.api package: {bp_import_error}", exc_info=True)
-        raise  # Σταματάμε την εκκίνηση αν τα blueprints δεν μπορούν να φορτωθούν.
-    # --- End Register Blueprints ---
+    @app.errorhandler(403)
+    def forbidden_error(error):
+        app.logger.warning(
+            f"403 Forbidden: {request.path} by user {current_user.username if current_user.is_authenticated else 'Anonymous'}")
+        return jsonify(error="Forbidden",
+                       message="You do not have the necessary permissions to access this resource."), 403
 
-    if app.debug or os.environ.get("FLASK_ENV") == "development":
-        route_logger = startup_logger
-        route_logger.debug("\n" + "=" * 60)
-        route_logger.debug("DEBUG: REGISTERED FLASK ROUTES AT END OF CREATE_APP")
-        route_logger.debug("=" * 60)
-        rules_to_log = []
-        for rule in app.url_map.iter_rules():
-            if rule.endpoint in ('static', '_debug_toolbar.static', '_debug_toolbar.redirect_to_build'):
-                continue
-            rules_to_log.append(
-                f"Endpoint: {rule.endpoint:40s} Route: {str(rule):50s} Methods: {','.join(sorted(rule.methods))}")
+    @app.errorhandler(500)
+    def internal_error(error):
+        try:
+            db.session.rollback()
+        except Exception as rb_exc:
+            app.logger.error(f"Error during rollback: {rb_exc}", exc_info=True)
+        app.logger.error(f"500 Internal Server Error: {request.path}", exc_info=error)
+        if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html:
+            return jsonify(error="Internal server error", message="An unexpected error occurred on the server."), 500
+        return jsonify(error="An internal server error occurred (500). Please try again later."), 500
 
-        for line in sorted(rules_to_log, key=lambda x: x.split("Route: ")[1]):
-            route_logger.debug(line)
-        route_logger.debug("=" * 60 + "\n")
-
-    @app.route('/health')
-    def health_check():
-        return "OK", 200
-
+    app.logger.info("Flask app creation completed.")
     return app

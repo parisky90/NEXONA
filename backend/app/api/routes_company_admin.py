@@ -1,118 +1,203 @@
 # backend/app/api/routes_company_admin.py
 from flask import Blueprint, request, jsonify, current_app
 from app import db
-from app.models import User
+from app.models import User, Company, Interview, Candidate  # Πρόσθεσε Interview, Candidate
 from flask_login import login_required, current_user
 from functools import wraps
-from datetime import datetime, timezone
+from datetime import datetime, timezone as dt_timezone
 
-# Αφαιρέσαμε το url_prefix από εδώ
-company_admin_bp = Blueprint('company_admin_api', __name__)
-print("!!!!!!!! FULL routes_company_admin.py - BLUEPRINT DEFINED (NO INTERNAL PREFIX, FOR OPTION A) !!!!!!!!!!")
+company_admin_bp = Blueprint('company_admin_api', __name__, url_prefix='/api/v1/company')
+
+
+# ΑΦΑΙΡΕΣΗ: logger = current_app.logger
 
 def company_admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
         if not current_user.is_authenticated:
             return jsonify({"error": "Authentication required"}), 401
-        if current_user.role != 'company_admin':
-            current_app.logger.warning(f"Access denied for user {current_user.id} ({current_user.username}) with role {current_user.role} to company admin route.")
-            return jsonify({"error": "Company admin access required"}), 403
-        if not current_user.company_id:
+        if current_user.role not in ['company_admin', 'superadmin']:
+            current_app.logger.warning(
+                f"Access denied for user {current_user.id} ({current_user.username}) with role {current_user.role} to company admin route {request.path}.")
+            return jsonify({"error": "Company admin or superadmin access required"}), 403
+        if current_user.role == 'company_admin' and not current_user.company_id:
             current_app.logger.error(f"Company admin {current_user.id} ({current_user.username}) has no company_id!")
             return jsonify({"error": "User configuration error: company admin not linked to a company."}), 500
         return f(*args, **kwargs)
+
     return decorated_function
 
-# Προσθέσαμε το /company στο path του route εδώ
-@company_admin_bp.route('/company/users', methods=['GET'])
+
+@company_admin_bp.route('/users', methods=['GET'])
 @login_required
 @company_admin_required
 def get_company_users():
-    admin_company_id = current_user.company_id
-    current_app.logger.info(f"Company admin {current_user.id} fetching users for company {admin_company_id}.")
+    current_app.logger.info(
+        f"[COMPANY_ADMIN_ROUTE] /users GET accessed by: User ID: {current_user.id}, Role: {current_user.role}, Company ID: {current_user.company_id}")
+    target_company_id = None
+    if current_user.role == 'superadmin':
+        company_id_arg = request.args.get('company_id', type=int)
+        if not company_id_arg:
+            return jsonify({"error": "Superadmin must specify a 'company_id' query parameter."}), 400
+        target_company_id = company_id_arg
+        if not db.session.get(Company, target_company_id):
+            return jsonify({"error": f"Company with ID {target_company_id} not found."}), 404
+    else:
+        target_company_id = current_user.company_id
+
+    current_app.logger.info(f"User {current_user.id} fetching users for company {target_company_id}.")
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 10, type=int)
     try:
-        users_pagination = User.query.filter_by(company_id=admin_company_id)\
-                                     .order_by(User.username)\
-                                     .paginate(page=page, per_page=per_page, error_out=False)
-        users_list = [{
-            "id": user.id, "username": user.username, "email": user.email,
-            "role": user.role, "is_active": user.is_active,
-            "created_at": user.created_at.isoformat() if user.created_at else None
-        } for user in users_pagination.items]
+        users_pagination = User.query.filter_by(company_id=target_company_id) \
+            .order_by(User.username) \
+            .paginate(page=page, per_page=per_page, error_out=False)
+        users_list = [user.to_dict() for user in users_pagination.items]
         return jsonify({
             "users": users_list, "total_pages": users_pagination.pages,
             "current_page": users_pagination.page, "total_users": users_pagination.total
         }), 200
     except Exception as e:
-        current_app.logger.error(f"Error fetching users for company {admin_company_id} by admin {current_user.id}: {e}", exc_info=True)
+        current_app.logger.error(
+            f"Error fetching users for company {target_company_id} by admin {current_user.id}: {e}", exc_info=True)
         return jsonify({"error": "Failed to retrieve users."}), 500
 
-# Προσθέσαμε το /company στο path του route εδώ
-@company_admin_bp.route('/company/users', methods=['POST'])
+
+@company_admin_bp.route('/users', methods=['POST'])
 @login_required
 @company_admin_required
 def create_company_user():
-    admin_company_id = current_user.company_id
+    current_app.logger.info(
+        f"[COMPANY_ADMIN_ROUTE] /users POST accessed by: User ID: {current_user.id}, Role: {current_user.role}, Company ID: {current_user.company_id}")
+    admin_acting_company_id = None
     data = request.get_json()
-    current_app.logger.info(f"Company admin {current_user.id} attempting to create user for company {admin_company_id} with data: {data}")
     if not data: return jsonify({"error": "Request must be JSON"}), 400
-    username = data.get('username'); email = data.get('email'); password = data.get('password')
-    if not username or not email or not password:
-        return jsonify({"error": "Username, email, and password are required"}), 400
-    if User.query.filter_by(username=username).first():
-        return jsonify({"error": "Username already exists"}), 409
-    if User.query.filter_by(email=email).first():
-        return jsonify({"error": "Email address already registered"}), 409
+    username = data.get('username')
+    email = data.get('email')
+    password = data.get('password')
+    role_for_new_user = data.get('role', 'user')
+    if current_user.role == 'superadmin':
+        company_id_from_payload_str = data.get('company_id')
+        if not company_id_from_payload_str and role_for_new_user != 'superadmin':
+            return jsonify({"error": "Superadmin must provide company_id for non-superadmin target roles."}), 400
+        if company_id_from_payload_str:
+            try:
+                admin_acting_company_id = int(company_id_from_payload_str)
+                if not db.session.get(Company, admin_acting_company_id):
+                    return jsonify({"error": f"Company with ID {admin_acting_company_id} not found."}), 404
+            except ValueError:
+                return jsonify({"error": "Invalid company_id format in payload."}), 400
+    else:
+        admin_acting_company_id = current_user.company_id
+    if not admin_acting_company_id and role_for_new_user != 'superadmin':
+        return jsonify({"error": "Target Company ID is required for this user role and could not be determined."}), 400
+    if not all([username, email, password]): return jsonify(
+        {"error": "Username, email, and password are required"}), 400
+    if User.query.filter_by(username=username).first(): return jsonify({"error": "Username already exists"}), 409
+    if User.query.filter_by(email=email.lower().strip()).first(): return jsonify(
+        {"error": "Email address already registered"}), 409
+    if current_user.role == 'company_admin' and role_for_new_user not in ['user']:
+        return jsonify({"error": "Company admins can only create users with the 'user' role."}), 403
+    if role_for_new_user == 'superadmin' and current_user.role != 'superadmin':
+        return jsonify({"error": "Only superadmins can create other superadmins."}), 403
     try:
         new_user = User(
-            username=username, email=email, role='user', is_active=True,
-            confirmed_on=datetime.now(timezone.utc), company_id=admin_company_id
+            username=username.strip(), email=email.strip().lower(), role=role_for_new_user,
+            is_active=data.get('is_active', True),
+            confirmed_on=datetime.now(dt_timezone.utc) if data.get('is_active', True) else None,
+            company_id=admin_acting_company_id
         )
         new_user.set_password(password)
-        db.session.add(new_user); db.session.commit()
-        current_app.logger.info(f"User '{new_user.username}' created for company ID {admin_company_id} by company admin {current_user.username}.")
-        return jsonify({
-            "id": new_user.id, "username": new_user.username, "email": new_user.email,
-            "role": new_user.role, "company_id": new_user.company_id, "is_active": new_user.is_active
-        }), 201
+        db.session.add(new_user)
+        db.session.commit()
+        current_app.logger.info(
+            f"User '{new_user.username}' (Role: {role_for_new_user}) created for company ID {admin_acting_company_id} by {current_user.username}.")
+        return jsonify(new_user.to_dict(include_company_info=(current_user.role == 'superadmin'))), 201
     except Exception as e:
         db.session.rollback()
-        current_app.logger.error(f"Company admin {current_user.id} error creating user '{username}': {e}", exc_info=True)
+        current_app.logger.error(f"Error creating user '{username}' by {current_user.username}: {e}", exc_info=True)
         return jsonify({"error": "Failed to create user due to an internal error."}), 500
 
-# Προσθέσαμε το /company στο path του route εδώ
-@company_admin_bp.route('/company/users/<int:user_id>/status', methods=['PUT'])
+
+@company_admin_bp.route('/users/<int:user_id>/status', methods=['PUT'])
 @login_required
 @company_admin_required
 def toggle_company_user_status(user_id):
-    admin_company_id = current_user.company_id
-    current_app.logger.info(f"Company admin {current_user.id} attempting to toggle status for user {user_id} in company {admin_company_id}.")
-    user_to_toggle = User.query.filter_by(id=user_id, company_id=admin_company_id).first_or_404(
-        description="User not found in your company or does not exist."
-    )
-    if user_to_toggle.id == current_user.id:
-        return jsonify({"error": "Cannot change your own status via this endpoint."}), 403
-    if user_to_toggle.role in ['company_admin', 'superadmin'] and user_to_toggle.id != current_user.id :
-         return jsonify({"error": "You cannot change the status of another administrator."}), 403
+    current_app.logger.info(
+        f"[COMPANY_ADMIN_ROUTE] /users/{user_id}/status PUT accessed by: User ID: {current_user.id}, Role: {current_user.role}")
+    user_to_toggle = db.session.get(User, user_id)
+    if not user_to_toggle: return jsonify({"error": "User not found."}), 404
+    if current_user.role == 'company_admin':
+        if user_to_toggle.company_id != current_user.company_id: return jsonify(
+            {"error": "Forbidden: Cannot manage users outside your company."}), 403
+        if user_to_toggle.role != 'user': return jsonify(
+            {"error": "Company admins can only toggle status for 'user' role members."}), 403
+    elif current_user.role == 'superadmin':
+        if user_to_toggle.id == current_user.id and user_to_toggle.role == 'superadmin': return jsonify(
+            {"error": "Superadmin cannot change their own active status."}), 403
     data = request.get_json()
     if data is None or 'is_active' not in data or not isinstance(data['is_active'], bool):
         return jsonify({"error": "Invalid or missing 'is_active' status (must be true or false)."}), 400
     new_status = data['is_active']
-    if user_to_toggle.is_active == new_status:
-        return jsonify({"message": "No change in user status."}), 200
+    if user_to_toggle.is_active == new_status: return jsonify(
+        {"message": "No change in user status.", "user": user_to_toggle.to_dict()}), 200
     user_to_toggle.is_active = new_status
-    if new_status and not user_to_toggle.confirmed_on:
-        user_to_toggle.confirmed_on = datetime.now(timezone.utc)
+    if new_status and not user_to_toggle.confirmed_on: user_to_toggle.confirmed_on = datetime.now(dt_timezone.utc)
     try:
         db.session.commit()
-        current_app.logger.info(f"User '{user_to_toggle.username}' (ID: {user_to_toggle.id}) status changed to {new_status} by company admin {current_user.username}.")
-        return jsonify({
-            "id": user_to_toggle.id, "username": user_to_toggle.username, "is_active": user_to_toggle.is_active
-        }), 200
+        current_app.logger.info(
+            f"User '{user_to_toggle.username}' (ID: {user_to_toggle.id}) status changed to {new_status} by {current_user.username}.")
+        return jsonify(user_to_toggle.to_dict()), 200
     except Exception as e:
         db.session.rollback()
-        current_app.logger.error(f"Error changing status for user {user_id} by company admin {current_user.id}: {e}", exc_info=True)
+        current_app.logger.error(f"Error changing status for user {user_id} by {current_user.username}: {e}",
+                                 exc_info=True)
         return jsonify({"error": "Failed to update user status."}), 500
+
+
+# --- ΝΕΟ ENDPOINT ΓΙΑ ΛΙΣΤΑ ΣΥΝΕΝΤΕΥΞΕΩΝ ---
+@company_admin_bp.route('/interviews', methods=['GET'])
+@login_required
+@company_admin_required  # Company admin ή superadmin
+def get_company_interviews():
+    target_company_id = None
+    if current_user.role == 'superadmin':
+        company_id_arg = request.args.get('company_id', type=int)
+        if not company_id_arg:
+            return jsonify({"error": "Superadmin must specify a 'company_id' query parameter to view interviews."}), 400
+        target_company_id = company_id_arg
+        if not db.session.get(Company, target_company_id):
+            return jsonify({"error": f"Company with ID {target_company_id} not found."}), 404
+    else:  # company_admin
+        target_company_id = current_user.company_id
+
+    current_app.logger.info(f"User {current_user.id} fetching interviews for company {target_company_id}.")
+
+    page = request.args.get('page', 1, type=int)
+    per_page = request.args.get('per_page', 15, type=int)
+    status_filter = request.args.get('status')  # e.g., PROPOSED, SCHEDULED, COMPLETED
+
+    # Query interviews through candidates of the target company
+    query = Interview.query.join(Candidate).filter(Candidate.company_id == target_company_id)
+
+    if status_filter:
+        query = query.filter(
+            Interview.status == status_filter.upper())  # Assuming status is stored as uppercase enum string
+
+    # Order by creation date or scheduled time
+    query = query.order_by(Interview.created_at.desc())
+
+    try:
+        interviews_pagination = query.paginate(page=page, per_page=per_page, error_out=False)
+        interviews_list = [interview.to_dict(include_sensitive=True) for interview in
+                           interviews_pagination.items]  # include_sensitive για τον admin
+
+        return jsonify({
+            "interviews": interviews_list,
+            "total_pages": interviews_pagination.pages,
+            "current_page": interviews_pagination.page,
+            "total_interviews": interviews_pagination.total
+        }), 200
+    except Exception as e:
+        current_app.logger.error(f"Error fetching interviews for company {target_company_id}: {e}", exc_info=True)
+        return jsonify({"error": "Failed to retrieve interviews."}), 500

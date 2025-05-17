@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ title }} - NEXONA</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f7f6; color: #333; }
+        .container { max-width: 600px; margin: 40px auto; padding: 30px; background-color: #fff; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); text-align: center; }
+        h1 { color: #2c3e50; margin-bottom: 20px; }
+        p { font-size: 1.1em; line-height: 1.6; }
+        .message { padding: 15px; border-radius: 5px; margin-top: 20px; }
+        .is-success { background-color: #e6ffed; border-left: 5px solid #28a745; color: #155724; }
+        .is-danger { background-color: #f8d7da; border-left: 5px solid #dc3545; color: #721c24; }
+        .is-warning { background-color: #fff3cd; border-left: 5px solid #ffc107; color: #856404; }
+        a.home-link { display: inline-block; margin-top: 30px; padding: 10px 20px; background-color: #3498db; color: white; text-decoration: none; border-radius: 5px; }
+        a.home-link:hover { background-color: #2980b9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>{{ title }}</h1>
+        <div class="message {{ status_class | default('is-success') }}">
+            <p>{{ message | safe }}</p>
+        </div>
+        <!-- Μπορείς να προσθέσεις ένα link για την αρχική σελίδα της εφαρμογής σου αν θέλεις -->
+        <!-- <a href="{{ url_for('main.index', _external=True) }}" class="home-link">Επιστροφή στην Αρχική</a> -->
+    </div>
+</body>
+</html>

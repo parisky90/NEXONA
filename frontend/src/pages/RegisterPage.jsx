@@ -1,8 +1,8 @@
 // frontend/src/pages/RegisterPage.jsx
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import apiClient from '../api';
-import '../AuthForm.css';
+import apiClient from '../api'; // Βεβαιώσου ότι το path είναι σωστό (../api αν το RegisterPage είναι στο pages/)
+import '../AuthForm.css'; // Βεβαιώσου ότι το path είναι σωστό
 
 function RegisterPage() {
   const [formData, setFormData] = useState({
@@ -10,8 +10,7 @@ function RegisterPage() {
     email: '',
     password: '',
     confirmPassword: '',
-    // firstName: '', // Προαιρετικά
-    // lastName: '',  // Προαιρετικά
+    company_name: '', // << ΠΡΟΣΘΗΚΗ ΠΕΔΙΟΥ company_name
   });
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
@@ -21,8 +20,8 @@ function RegisterPage() {
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
-    setError(''); // Clear error on change
-    setSuccessMessage(''); // Clear success on change
+    setError(''); 
+    setSuccessMessage(''); 
   };
 
   const handleSubmit = async (e) => {
@@ -34,17 +33,27 @@ function RegisterPage() {
       setError('Passwords do not match.');
       return;
     }
-    if (formData.password.length < 8) {
+    if (formData.password.length < 8) { // Παράδειγμα ελάχιστου μήκους
       setError('Password must be at least 8 characters long.');
       return;
+    }
+    if (!formData.company_name.trim()) { // Έλεγχος αν το company_name είναι κενό
+        setError('Company name is required.');
+        return;
     }
 
     setIsLoading(true);
     try {
       // Αφαίρεσε το confirmPassword από το payload που στέλνεται στο backend
-      const { confirmPassword, ...payload } = formData;
-      const response = await apiClient.post('/register', payload);
-      setSuccessMessage(response.data.message || 'Registration successful! Please check your email for confirmation and await admin approval.');
+      // Το company_name θα είναι ήδη στο formData και θα συμπεριληφθεί στο payload
+      const { confirmPassword, ...payload } = formData; 
+      
+      const response = await apiClient.post('/register', payload); // Το endpoint είναι /api/v1/register μέσω του apiClient
+      
+      setSuccessMessage(response.data.message || 'Registration successful! You can now login.');
+      // Καθαρισμός φόρμας μετά την επιτυχία
+      setFormData({ username: '', email: '', password: '', confirmPassword: '', company_name: '' });
+      
       // Προαιρετικά, κάνε redirect στο login μετά από λίγο ή δείξε link
       setTimeout(() => {
         navigate('/login');
@@ -57,11 +66,11 @@ function RegisterPage() {
   };
 
   return (
-    <div className="auth-container card-style"> {/* Χρησιμοποίησε ένα γενικό class για auth forms */}
+    <div className="auth-container card-style">
       <h2>Register New Account</h2>
       <form onSubmit={handleSubmit} className="auth-form">
         {error && <p className="error-message">{error}</p>}
-        {successMessage && <p className="success-message" style={{color: 'green'}}>{successMessage}</p>}
+        {successMessage && <p className="success-message" style={{color: 'green', marginBottom: '1rem'}}>{successMessage}</p>}
         
         <div className="form-group">
           <label htmlFor="username">Username:</label>
@@ -72,7 +81,7 @@ function RegisterPage() {
             value={formData.username}
             onChange={handleChange}
             required
-            className="input-light-gray"
+            className="input-light-gray" // Χρησιμοποίησε την κλάση από το App.css
           />
         </div>
         <div className="form-group">
@@ -87,6 +96,22 @@ function RegisterPage() {
             className="input-light-gray"
           />
         </div>
+        
+        {/* --- ΠΡΟΣΘΗΚΗ ΠΕΔΙΟΥ COMPANY NAME --- */}
+        <div className="form-group">
+          <label htmlFor="company_name">Company Name:</label>
+          <input
+            type="text"
+            id="company_name"
+            name="company_name" // Σημαντικό: το όνομα του input
+            value={formData.company_name}
+            onChange={handleChange}
+            required
+            className="input-light-gray"
+          />
+        </div>
+        {/* --- ΤΕΛΟΣ ΠΡΟΣΘΗΚΗΣ --- */}
+
         <div className="form-group">
           <label htmlFor="password">Password:</label>
           <input
@@ -113,17 +138,7 @@ function RegisterPage() {
             className="input-light-gray"
           />
         </div>
-        {/* 
-        // Προαιρετικά πεδία
-        <div className="form-group">
-          <label htmlFor="firstName">First Name:</label>
-          <input type="text" id="firstName" name="firstName" value={formData.firstName} onChange={handleChange} className="input-light-gray"/>
-        </div>
-        <div className="form-group">
-          <label htmlFor="lastName">Last Name:</label>
-          <input type="text" id="lastName" name="lastName" value={formData.lastName} onChange={handleChange} className="input-light-gray"/>
-        </div>
-        */}
+       
         <button type="submit" disabled={isLoading} className="button-action button-primary auth-button">
           {isLoading ? 'Registering...' : 'Register'}
         </button>

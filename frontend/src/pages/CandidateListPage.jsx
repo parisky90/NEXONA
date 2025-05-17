@@ -1,33 +1,23 @@
 // frontend/src/pages/CandidateListPage.jsx
-import React, { useState, useEffect, useCallback } from 'react';
-import DashboardSummary from '../components/DashboardSummary';
+import React, { useState, useEffect, useCallback, useMemo } from 'react'; // Προσθήκη useMemo
+import DashboardSummary from '../components/DashboardSummary'; // Αυτό ίσως δεν χρειάζεται εδώ
 import CandidateList from '../components/CandidateList';
 import SearchBar from '../components/SearchBar';
 import apiClient from '../api';
 import { useAuth } from '../App';
-import { useParams } from 'react-router-dom'; // Για να παίρνουμε το status από το URL
+import { useParams } from 'react-router-dom';
 
 const capitalize = (s) => s && s[0].toUpperCase() + s.slice(1);
 
 const getListTitle = (statusRouteParam) => {
-    // Μετατροπή του status από το URL (π.χ. needs-review) σε αυτό που περιμένει το API (NeedsReview)
-    // και για τον τίτλο.
     if (!statusRouteParam) return 'All Candidates';
     const statusMappings = {
-        'needs-review': 'NeedsReview',
-        'accepted': 'Accepted',
-        'interested': 'Interested',
-        'interview': 'Interview',
-        'evaluation': 'Evaluation',
-        'offermade': 'OfferMade', // Το API περιμένει OfferMade
-        'hired': 'Hired',
-        'rejected': 'Rejected',
-        'declined': 'Declined',
-        'processing': 'Processing',
-        'parsing-failed': 'ParsingFailed' // Νέο status
+        'needs-review': 'NeedsReview', 'accepted': 'Accepted', 'interested': 'Interested',
+        'interview': 'Interview', 'evaluation': 'Evaluation', 'offermade': 'OfferMade',
+        'hired': 'Hired', 'rejected': 'Rejected', 'declined': 'Declined',
+        'processing': 'Processing', 'parsing-failed': 'ParsingFailed'
     };
     const apiStatus = statusMappings[statusRouteParam.toLowerCase()] || capitalize(statusRouteParam);
-
     switch (apiStatus) {
         case 'NeedsReview': return 'Candidates Needing Review';
         case 'Accepted': return 'Accepted Candidates';
@@ -37,22 +27,22 @@ const getListTitle = (statusRouteParam) => {
         case 'OfferMade': return 'Candidates With Offer Made';
         case 'Hired': return 'Hired Candidates';
         case 'Rejected': return 'Rejected Candidates';
-        case 'Declined': return 'Declined Candidates (by Candidate)';
+        case 'Declined': return 'Declined Candidates';
         case 'Processing': return 'Processing CVs';
         case 'ParsingFailed': return 'CVs with Parsing Failed';
         default: return `${capitalize(apiStatus)} Candidates`;
     }
 };
 
-
 function CandidateListPage() {
-  const { status: statusFromUrl } = useParams(); // Πάρε το status από το URL
+  const { status: statusFromUrl } = useParams();
   const { currentUser } = useAuth();
-  const [summaryData, setSummaryData] = useState(null);
+  // const [summaryData, setSummaryData] = useState(null); // Το summary είναι στο DashboardPage
   const [candidates, setCandidates] = useState([]);
-  const [isLoadingSummary, setIsLoadingSummary] = useState(true);
+  // const [isLoadingSummary, setIsLoadingSummary] = useState(true); // Δεν χρειάζεται εδώ
   const [isLoadingList, setIsLoadingList] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState(null); // Γενικό error για τη σελίδα
+  const [listError, setListError] = useState(''); // Ειδικό error για τη λίστα
   const [searchTerm, setSearchTerm] = useState('');
 
   const [currentPage, setCurrentPage] = useState(1);
@@ -60,99 +50,60 @@ function CandidateListPage() {
   const [totalCandidates, setTotalCandidates] = useState(0);
   const ITEMS_PER_PAGE_LIST = 15;
 
-  // Μετατροπή του status από το URL σε αυτό που καταλαβαίνει το API
   const statusMappingsForApi = {
       'needs-review': 'NeedsReview', 'accepted': 'Accepted', 'interested': 'Interested',
       'interview': 'Interview', 'evaluation': 'Evaluation', 'offermade': 'OfferMade',
       'hired': 'Hired', 'rejected': 'Rejected', 'declined': 'Declined',
       'processing': 'Processing', 'parsing-failed': 'ParsingFailed'
   };
-  const apiStatus = statusMappingsForApi[statusFromUrl?.toLowerCase()] || capitalize(statusFromUrl || 'All');
-  const listTitle = getListTitle(statusFromUrl); // Για τον τίτλο της σελίδας
+  const apiStatus = useMemo(() => statusMappingsForApi[statusFromUrl?.toLowerCase()] || capitalize(statusFromUrl || 'All'), [statusFromUrl]);
+  const listTitle = useMemo(() => getListTitle(statusFromUrl), [statusFromUrl]);
 
-  const companyIdForRequests = currentUser?.role === 'superadmin' ? null : currentUser?.company_id;
+  const companyIdParam = useMemo(() => {
+    if (!currentUser) return undefined;
+    return currentUser.role === 'superadmin' ? undefined : currentUser.company_id;
+  }, [currentUser]);
 
-  const fetchSummary = useCallback(async () => {
-    setIsLoadingSummary(true);
-    try {
-      const params = companyIdForRequests ? { company_id: companyIdForRequests } : {};
-      const res = await apiClient.get('/dashboard/summary', { params });
-      setSummaryData(res.data);
-    } catch (err) {
-      console.error(`Error fetching summary for ${apiStatus} list:`, err);
-      if (!error) setError(err.response?.data?.error || 'Failed to load summary data.');
-      setSummaryData(null);
-    } finally {
-      setIsLoadingSummary(false);
+  const fetchCandidates = useCallback(async (page = 1, currentSearchTerm = searchTerm) => {
+    if (currentUser === null) return; // Μην κάνεις fetch αν δεν έχει φορτωθεί ο χρήστης
+    if (apiStatus === 'All' && !currentSearchTerm) {
+        setCandidates([]); setIsLoadingList(false); setTotalPages(0); setTotalCandidates(0); setListError('');
+        return;
     }
-  }, [companyIdForRequests, error, apiStatus]);
-
-  const fetchCandidates = useCallback(async (page = 1, query = searchTerm) => {
-    if (!apiStatus || apiStatus === 'All' && !query) { // Αν είναι 'All' και δεν υπάρχει query, μην κάνεις fetch (ή κάνε για όλους)
-        // setError("Status prop not provided or is 'All' without search.");
-        // setIsLoadingList(false);
-        // setCandidates([]);
-        // return;
-        // Για την ώρα, αν είναι 'All' και δεν υπάρχει query, δεν κάνουμε τίποτα.
-        // Θα μπορούσες να έχεις μια default λίστα ή να απαιτείς search.
-        if (apiStatus === 'All' && !query) {
-             setCandidates([]); setIsLoadingList(false); setTotalPages(0); setTotalCandidates(0);
-             return;
-        }
-    }
-    setIsLoadingList(true);
-    setError(null);
+    setIsLoadingList(true); setListError('');
     try {
-      const params = {
-        page,
-        per_page: ITEMS_PER_PAGE_LIST,
-      };
-      if (companyIdForRequests) {
-        params.company_id = companyIdForRequests;
+      const params = { page, per_page: ITEMS_PER_PAGE_LIST };
+      if (companyIdParam !== undefined) {
+        params.company_id = companyIdParam;
       }
-
-      let response;
-      if (query) {
-        params.q = encodeURIComponent(query);
-        if (apiStatus !== 'All') { // Πρόσθεσε το status στο search μόνο αν δεν είναι 'All'
-            params.status = apiStatus;
-        }
-        console.log("Searching with params:", params);
-        response = await apiClient.get('/search', { params });
-      } else {
-        console.log(`Fetching candidates for status: ${apiStatus} with params:`, params);
-        response = await apiClient.get(`/candidates/${apiStatus}`, { params });
+      if (currentSearchTerm) {
+        params.search = encodeURIComponent(currentSearchTerm);
       }
+      if (apiStatus && apiStatus.toLowerCase() !== 'all') {
+        params.status = apiStatus;
+      }
+      
+      const response = await apiClient.get(`/candidates`, { params }); 
       
       setCandidates(Array.isArray(response.data.candidates) ? response.data.candidates : []);
       setTotalPages(response.data.total_pages || 0);
       setTotalCandidates(response.data.total_results || 0);
       setCurrentPage(response.data.current_page || 1);
-
     } catch (err) {
-      console.error(`Error fetching ${apiStatus} candidates:`, err);
-      setError(err.response?.data?.error || `Failed to load ${apiStatus} candidates.`);
-      setCandidates([]);
-      setTotalPages(0);
-      setTotalCandidates(0);
+      setListError(err.response?.data?.error || `Failed to load ${listTitle}.`);
+      setCandidates([]); setTotalPages(0); setTotalCandidates(0);
     } finally {
       setIsLoadingList(false);
     }
-  }, [apiStatus, companyIdForRequests, searchTerm]); // searchTerm προστέθηκε
+  }, [apiStatus, companyIdParam, searchTerm, ITEMS_PER_PAGE_LIST, currentUser, listTitle]); // Προσθήκη listTitle για το error message
 
   useEffect(() => {
-    setError(null);
-    fetchSummary();
-    // Αν το status είναι 'All' και δεν υπάρχει searchTerm, μην κάνεις fetch αρχικά.
-    if (apiStatus !== 'All' || searchTerm) {
+    // Δεν χρειάζεται fetchSummary εδώ, μόνο στο DashboardPage
+    if (currentUser) { // Έλεγχος αν ο currentUser είναι διαθέσιμος
+        setCurrentPage(1); // Reset σελίδας
         fetchCandidates(1, searchTerm);
-    } else {
-        setCandidates([]); // Καθάρισμα υποψηφίων αν είμαστε στο "All" χωρίς search term
-        setIsLoadingList(false);
-        setTotalPages(0);
-        setTotalCandidates(0);
     }
-  }, [apiStatus, fetchSummary, fetchCandidates, searchTerm]); // searchTerm προστέθηκε
+  }, [currentUser, apiStatus, searchTerm, fetchCandidates]); // Εξαρτάται από το apiStatus (από το URL) και το searchTerm
 
   const handleSearchChange = (event) => setSearchTerm(event.target.value);
   
@@ -162,20 +113,26 @@ function CandidateListPage() {
   };
 
   const handlePageChange = (newPage) => {
-    fetchCandidates(newPage, searchTerm);
+    if (newPage >= 1 && newPage <= totalPages) {
+        fetchCandidates(newPage, searchTerm);
+    }
   };
   
   const handleCandidateDeletedOnListPage = (deletedCandidateId) => {
     setCandidates(prevCandidates => prevCandidates.filter(c => c.candidate_id !== deletedCandidateId));
-    fetchSummary(); // Ενημέρωση και του summary
+    setTotalCandidates(prev => prev -1); // Απλή μείωση, ίσως χρειαστεί ξανά fetch για ακρίβεια
+    // fetchSummary(); // Δεν χρειάζεται εδώ
   };
+  
+  if (!currentUser) {
+    return <div className="loading-placeholder card-style">Initializing page...</div>;
+  }
 
   return (
-    <div className="candidate-list-page main-content-area"> {/* Πρόσθεσα main-content-area */}
+    <div className="candidate-list-page main-content-area">
        <h2 style={{textAlign: 'center', marginBottom: '1rem'}}>{listTitle}</h2>
-       {isLoadingSummary ? <p className="loading-placeholder">Loading summary...</p> : null}
-       {summaryData && <DashboardSummary summary={summaryData} />}
-       {error && !summaryData && !isLoadingList && <p className="error-message" style={{textAlign: 'center'}}>Error loading summary: {error}</p>}
+       {/* Δεν εμφανίζουμε το DashboardSummary εδώ */}
+       {error && <p className="error-message" style={{textAlign: 'center'}}>{error}</p>}
 
       <SearchBar
           searchTerm={searchTerm}
@@ -183,40 +140,38 @@ function CandidateListPage() {
           onSearchSubmit={handleSearchSubmit}
           placeholder={`Search in ${listTitle}...`}
           inputClassName="input-light-gray"
-          buttonClassName="button-navy-blue"
+          buttonClassName="button-action button-secondary" // Διαφορετικό στυλ από το dashboard
        />
 
       {isLoadingList && <p className="loading-placeholder" style={{marginTop: '1rem'}}>Loading candidates...</p>}
-      {error && !isLoadingList && <p className="error-message" style={{textAlign: 'center', marginTop: '1rem'}}>Error loading candidates: {error}</p>}
+      {listError && !isLoadingList && <p className="error-message" style={{textAlign: 'center', marginTop: '1rem'}}>{listError}</p>}
       
-      {!isLoadingList && !error && candidates.length === 0 && searchTerm && (
+      {!isLoadingList && !listError && candidates.length === 0 && searchTerm && (
             <p style={{ textAlign: 'center', marginTop: '1rem' }}>No candidates found matching '{searchTerm}' in {listTitle}.</p>
        )}
-      {!isLoadingList && !error && candidates.length === 0 && !searchTerm && apiStatus !== 'All' && (
+      {!isLoadingList && !listError && candidates.length === 0 && !searchTerm && apiStatus !== 'All' && (
             <p style={{ textAlign: 'center', marginTop: '1rem' }}>No candidates currently in {listTitle}.</p>
        )}
-      {!isLoadingList && !error && candidates.length === 0 && !searchTerm && apiStatus === 'All' && (
-            <p style={{ textAlign: 'center', marginTop: '1rem' }}>Please enter a search term to find candidates.</p>
+      {!isLoadingList && !listError && candidates.length === 0 && !searchTerm && apiStatus === 'All' && (
+            <p style={{ textAlign: 'center', marginTop: '1rem' }}>Please enter a search term to view all candidates or select a status from the sidebar.</p>
        )}
 
-
-      {!isLoadingList && !error && candidates.length > 0 && (
+      {!isLoadingList && !listError && candidates.length > 0 && (
          <CandidateList 
             candidates={candidates} 
-            listTitle={listTitle} // Δεν χρειάζεται πλέον, ο τίτλος είναι πάνω
             onCandidateDeleted={handleCandidateDeletedOnListPage}
+            listTitle="" // Δεν χρειάζεται ο τίτλος μέσα στο CandidateList component πλέον
         />
       )}
       
       {!isLoadingList && totalPages > 1 && (
         <div className="pagination-controls" style={{ marginTop: '1rem', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}>
-          <button onClick={() => handlePageChange(currentPage - 1)} disabled={currentPage === 1 || isLoadingList} className="button-action button-cancel-schedule">Previous</button>
+          <button onClick={() => handlePageChange(currentPage - 1)} disabled={currentPage === 1 || isLoadingList} className="button-action button-secondary">Previous</button>
           <span>Page {currentPage} of {totalPages} (Total: {totalCandidates} candidates)</span>
-          <button onClick={() => handlePageChange(currentPage + 1)} disabled={currentPage === totalPages || isLoadingList} className="button-action button-cancel-schedule">Next</button>
+          <button onClick={() => handlePageChange(currentPage + 1)} disabled={currentPage === totalPages || isLoadingList} className="button-action button-secondary">Next</button>
         </div>
       )}
     </div>
   );
 }
-
 export default CandidateListPage;
