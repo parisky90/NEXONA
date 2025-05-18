@@ -2,7 +2,7 @@
 from flask import Blueprint, request, jsonify, current_app, render_template
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.utils import secure_filename
-from app import db, s3_service_instance, celery  # Προστέθηκε το celery instance
+from app import db, s3_service_instance, celery
 from app.models import (
     User, Company, Candidate, Position, CompanySettings,
     Interview, InterviewStatus
@@ -11,8 +11,6 @@ from app.config import Config
 from datetime import datetime, timedelta, timezone as dt_timezone
 from zoneinfo import ZoneInfo
 import uuid
-
-# import logging # Δεν χρησιμοποιείται απευθείας, το current_app.logger είναι διαθέσιμο
 
 bp = Blueprint('api', __name__, url_prefix='/api/v1')
 
@@ -117,52 +115,75 @@ def session_status():
 @login_required
 def dashboard_summary():
     current_app.logger.info(
-        f"--- dashboard_summary endpoint CALLED by user: {current_user.id if current_user.is_authenticated else 'Anonymous'}, Role: {current_user.role if current_user.is_authenticated else 'N/A'} ---")
+        f"--- ENTERING /api/v1/dashboard/summary. User: {current_user.username if current_user.is_authenticated else 'Guest'}, Role: {current_user.role if current_user.is_authenticated else 'N/A'} ---")
+    current_app.logger.info(f"Request args: {request.args}")
+
     if current_user.role != 'superadmin' and not current_user.company_id:
-        current_app.logger.warning(
-            f"Dashboard access denied for user {current_user.id} (no company_id and not superadmin).")
+        current_app.logger.warning(f"Dashboard access DENIED (not SA, no company_id) for user {current_user.id}.")
         return jsonify({"error": "User not associated with a company"}), 403
+
     company_id_to_filter = None
     if current_user.role == 'superadmin':
-        company_id_param = request.args.get('company_id', type=int)
-        if company_id_param:
-            company_id_to_filter = company_id_param
-            if not db.session.get(Company, company_id_to_filter):
-                current_app.logger.warning(
-                    f"Superadmin requested dashboard for non-existent company ID: {company_id_to_filter}")
-                return jsonify({"error": f"Company with ID {company_id_to_filter} not found."}), 404
-    else:
+        company_id_param_str = request.args.get('company_id')
+        current_app.logger.info(f"Superadmin: company_id_param_str from request: '{company_id_param_str}'")
+        if company_id_param_str:  # Check if the parameter exists and is not empty
+            try:
+                company_id_to_filter = int(company_id_param_str)
+                current_app.logger.info(
+                    f"Superadmin: company_id_to_filter after int conversion: {company_id_to_filter}")
+                if not db.session.get(Company, company_id_to_filter):
+                    current_app.logger.warning(
+                        f"Superadmin requested dashboard for non-existent company ID: {company_id_to_filter}")
+                    return jsonify({"error": f"Company with ID {company_id_to_filter} not found."}), 404
+            except ValueError:
+                current_app.logger.warning(f"Superadmin provided invalid company_id: '{company_id_param_str}'")
+                return jsonify({"error": f"Invalid company_id format: {company_id_param_str}"}), 400
+    else:  # company_admin or other roles with company_id
         company_id_to_filter = current_user.company_id
+
+    current_app.logger.info(f"Final company_id_to_filter for dashboard summary: {company_id_to_filter}")
+
     now_utc = datetime.now(dt_timezone.utc)
+
     if company_id_to_filter:
         total_candidates = Candidate.query.filter_by(company_id=company_id_to_filter).count()
         active_positions = Position.query.filter_by(company_id=company_id_to_filter, status='Open').count()
         upcoming_interviews_count = Interview.query.join(Candidate).filter(
-            Candidate.company_id == company_id_to_filter, Interview.status == InterviewStatus.SCHEDULED,
-            Interview.scheduled_start_time > now_utc).count()
-    else:
+            Candidate.company_id == company_id_to_filter,
+            Interview.status == InterviewStatus.SCHEDULED,
+            Interview.scheduled_start_time > now_utc
+        ).count()
+    else:  # Superadmin without a specific company_id filter
         total_candidates = Candidate.query.count()
         active_positions = Position.query.filter_by(status='Open').count()
         upcoming_interviews_count = Interview.query.filter(
-            Interview.status == InterviewStatus.SCHEDULED, Interview.scheduled_start_time > now_utc).count()
+            Interview.status == InterviewStatus.SCHEDULED,
+            Interview.scheduled_start_time > now_utc
+        ).count()
+
     stages = ["New", "Processing", "NeedsReview", "Accepted", "Interested", "Interview Scheduled", "Interviewing",
               "Evaluation", "OfferMade", "Hired", "Rejected", "Declined", "ParsingFailed", "On Hold"]
     candidates_by_stage = []
     for stage in stages:
         query = Candidate.query.filter(Candidate.current_status == stage)
-        if company_id_to_filter: query = query.filter(Candidate.company_id == company_id_to_filter)
+        if company_id_to_filter:
+            query = query.filter(Candidate.company_id == company_id_to_filter)
         count = query.count()
         candidates_by_stage.append({"stage_name": stage, "count": count})
+
     summary_data = {
-        "total_candidates": total_candidates, "active_positions": active_positions,
-        "upcoming_interviews": upcoming_interviews_count, "candidates_by_stage": candidates_by_stage
+        "total_candidates": total_candidates,
+        "active_positions": active_positions,
+        "upcoming_interviews": upcoming_interviews_count,
+        "candidates_by_stage": candidates_by_stage
     }
     for item in candidates_by_stage:
         key_name = item['stage_name'].lower().replace(" ", "") + "_count"
         summary_data[key_name] = item['count']
         summary_data[item['stage_name'].lower().replace(" ", "")] = item['count']
+
     current_app.logger.info(
-        f"Dashboard summary generated for user {current_user.id}, company_filter: {company_id_to_filter}")
+        f"Dashboard summary successfully generated for user {current_user.id}, company_filter: {company_id_to_filter}. Returning 200 OK.")
     return jsonify(summary_data), 200
 
 
@@ -238,8 +259,6 @@ def upload_cv():
                 f"Candidate record created with ID {new_candidate.candidate_id} and placeholder email {placeholder_email}")
             if Config.TEXTKERNEL_ENABLED:
                 try:
-                    # ΣΩΣΤΟΣ ΤΡΟΠΟΣ ΚΛΗΣΗΣ TASK (με βάση το όνομα που ορίζεται στο decorator του task)
-                    # Υποθέτουμε ότι το task ονομάζεται 'tasks.parsing.parse_cv_task'
                     celery.send_task('tasks.parsing.parse_cv_task',
                                      args=[str(new_candidate.candidate_id), file_key, target_company_id])
                     current_app.logger.info(
@@ -662,7 +681,6 @@ def confirm_interview_slot(token, slot_choice):
         greece_tz = ZoneInfo("Europe/Athens")
         confirmed_time_display = selected_slot_start.astimezone(greece_tz).strftime(
             "%A, %d %B %Y at %H:%M (%Z)") if selected_slot_start else "N/A"
-        # Εδώ θα καλούσες τα tasks για email επιβεβαίωσης
         # celery.send_task('tasks.communication.send_interview_confirmation_to_candidate_task', args=[interview.id])
         # celery.send_task('tasks.communication.send_interview_confirmation_to_recruiter_task', args=[interview.id])
         return render_interview_action_page("Interview Confirmed",

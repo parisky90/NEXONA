@@ -1,21 +1,21 @@
 // frontend/src/pages/AdminCompaniesPage.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { getCompanies, createCompany } from '../services/adminService';
+import { getCompanies, createCompany } from '../services/adminService'; // Βεβαιώσου ότι το path είναι σωστό
 
 function AdminCompaniesPage() {
   const [companies, setCompanies] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(''); // Γενικό error για τη φόρτωση της λίστας
   const [newCompanyName, setNewCompanyName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [createError, setCreateError] = useState(''); // Ειδικό error για τη δημιουργία
 
-  // frontend/src/pages/AdminCompaniesPage.jsx
   const fetchCompaniesData = useCallback(async () => {
     setIsLoading(true);
-    setError(''); // <--- ΚΑΘΑΡΙΣΕ ΤΟ ERROR ΠΡΙΝ ΤΟ FETCH
+    setError(''); // Καθάρισε το γενικό error πριν από κάθε fetch
     try {
-      const data = await getCompanies(); // Αυτό επιστρέφEI { companies: [...], ...}
-      setCompanies(data.companies || []); // Χρησιμοποίησε το data.companies
+      const data = await getCompanies(); // Επιστρέφει { companies: [...], ... }
+      setCompanies(data.companies || []); // Πάρε το array από το data.companies
     } catch (err) {
       setError(err.error || err.message || 'Failed to load companies.');
       setCompanies([]);
@@ -31,24 +31,62 @@ function AdminCompaniesPage() {
   const handleCreateCompany = async (e) => {
     e.preventDefault();
     if (!newCompanyName.trim()) {
-      setError('Company name cannot be empty.');
+      setCreateError('Company name cannot be empty.'); // Χρησιμοποίησε το createError
       return;
     }
     setIsSubmitting(true);
-    setError('');
+    setCreateError(''); // Καθάρισε το createError
+    setError(''); // Καθάρισε και το γενικό error
     try {
       await createCompany({ name: newCompanyName.trim() });
       setNewCompanyName('');
-      fetchCompaniesData();
+      fetchCompaniesData(); // Επαναφόρτωση λίστας μετά τη δημιουργία
     } catch (err) {
-      setError(err.error || err.message || 'Failed to create company.');
+      setCreateError(err.error || err.message || 'Failed to create company.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  // Μηνύματα φόρτωσης/σφάλματος για τη λίστα
+  let companyListContent;
   if (isLoading) {
-    return <div className="loading-placeholder card-style">Loading companies...</div>;
+    companyListContent = <div className="loading-placeholder card-style">Loading companies...</div>;
+  } else if (error) {
+    companyListContent = <p className="error-message">{error}</p>;
+  } else if (companies.length === 0) {
+    companyListContent = <p>No companies found.</p>;
+  } else {
+    companyListContent = (
+      <div className="table-responsive">
+        <table className="candidate-table"> {/* Βεβαιώσου ότι δεν υπάρχει κενό εδώ */}
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Name</th>
+              <th>Owner User ID</th>
+              <th>Owner Username</th>
+              <th>Users</th>
+              <th>Candidates</th>
+              <th>Created At</th>
+            </tr>
+          </thead>
+          <tbody>
+            {companies.map((company) => (
+              <tr key={company.company_id || company.id}> {/* Χρησιμοποίησε company_id ή id */}
+                <td>{company.company_id || company.id}</td>
+                <td>{company.name}</td>
+                <td>{company.owner_user_id || 'N/A'}</td>
+                <td>{company.owner_username || 'N/A'}</td>
+                <td>{company.user_count !== undefined ? company.user_count : 'N/A'}</td>
+                <td>{company.candidate_count !== undefined ? company.candidate_count : 'N/A'}</td>
+                <td>{company.created_at ? new Date(company.created_at).toLocaleDateString() : 'N/A'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
   }
 
   return (
@@ -76,49 +114,12 @@ function AdminCompaniesPage() {
           <button type="submit" className="button-action button-primary" disabled={isSubmitting}>
             {isSubmitting ? 'Creating...' : 'Create Company'}
           </button>
-          {/* Εμφάνιση σφάλματος δημιουργίας εταιρείας */}
-          {error && isSubmitting === false && newCompanyName === '' && <p className="error-message" style={{ marginTop: '0.5rem' }}>{error}</p>}
-          {/* Προσοχή: Το παραπάνω error θα εμφανιστεί ΚΑΙ αν υπάρχει error φόρτωσης. Ίσως χρειάζεται ξεχωριστό state για createError */}
+          {createError && <p className="error-message" style={{ marginTop: '0.5rem' }}>{createError}</p>}
         </form>
       </div>
 
       <h3>Existing Companies</h3>
-      {/* Έλεγχος για σφάλμα φόρτωσης εταιρειών */}
-      {error && companies.length === 0 && !isLoading && (
-          <p className="error-message">{error}</p>
-      )}
-      {companies.length === 0 && !isLoading && !error && (
-        <p>No companies found.</p>
-      )}
-      {companies.length > 0 && (
-        // --- ΠΙΘΑΝΗ ΔΙΟΡΘΩΣΗ ΓΙΑ WHITESPACE ---
-        // Βεβαιώσου ότι δεν υπάρχουν κενά ή σχόλια JSX εδώ
-        <table className="candidate-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Name</th>
-              <th>Owner User ID</th>
-              <th>Users</th>
-              <th>Candidates</th>
-              <th>Created At</th>
-            </tr>
-          </thead>
-          <tbody>
-            {companies.map((company) => (
-              <tr key={company.id}>
-                <td>{company.id}</td>
-                <td>{company.name}</td>
-                <td>{company.owner_user_id || 'N/A'}</td>
-                <td>{company.user_count !== undefined ? company.user_count : 'N/A'}</td>
-                <td>{company.candidate_count !== undefined ? company.candidate_count : 'N/A'}</td>
-                <td>{company.created_at ? new Date(company.created_at).toLocaleDateString() : 'N/A'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        // --- ΤΕΛΟΣ ΠΙΘΑΝΗΣ ΔΙΟΡΘΩΣΗΣ ---
-      )}
+      {companyListContent}
     </div>
   );
 }
