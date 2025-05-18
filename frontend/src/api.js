@@ -26,16 +26,21 @@ const apiClient = axios.create({
 apiClient.interceptors.response.use(
     response => response,
     error => {
-        console.error("API call error:", error.response || error.message || error);
-        // Εδώ θα μπορούσες να προσθέσεις πιο εξειδικευμένο error handling, π.χ. logout σε 401
+     console.error("API call error (interceptor):", {
+            message: error.message,
+            configUrl: error.config?.url,
+            responseStatus: error.response?.status,
+            responseData: error.response?.data,
+            isAxiosError: error.isAxiosError,
+            fullErrorObject: error 
+        });
+        // --- ΤΕΛΟΣ ΠΡΟΣΘΗΚΗΣ ---
         if (error.response && error.response.status === 401) {
-            // Παράδειγμα: Κάνε logout τον χρήστη αν το API επιστρέψει 401 Unauthorized
-            // Αυτό εξαρτάται από το πώς διαχειρίζεσαι το auth state (π.χ. AuthContext)
-            // window.dispatchEvent(new Event('auth-error-401')); // Ένας τρόπος να ειδοποιήσεις το App component
+            // ...
         }
         return Promise.reject(error);
     }
-);
+);   
 
 // --- ΥΠΑΡΧΟΥΣΑ ΣΥΝΑΡΤΗΣΗ ---
 export const uploadCV = (formData) => {

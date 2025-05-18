@@ -13,8 +13,7 @@
   box-shadow: var(--box-shadow-sm, 0 1px 3px rgba(0,0,0,0.1)); 
   display: flex;
   align-items: center; 
-  min-height: 70px; /* Διατήρησε ένα λογικό min-height για το header */
-  /* Το πραγματικό ύψος θα προσαρμοστεί ανάλογα με το logo + padding */
+  min-height: 70px; 
   position: sticky;
   top: 0;
   z-index: 1020; 
@@ -29,13 +28,8 @@
 }
 
 .app-logo {
-  height: 60px !important;       /* <<-- ΔΟΚΙΜΑΣΕ 60px (ή 65px, 70px) */
-  /* Αν το header έχει padding 5px πάνω/κάτω, και min-height 70px, */
-  /* τότε ένα logo 60px θα έχει 5px κενό πάνω και 5px κάτω. */
+  height: 60px !important;       
   width: auto !important;        
-  /* min-height: 55px !important;  Μπορείς να το αφαιρέσεις αν το height είναι αρκετά μεγάλο */
-  max-height: none !important;   
-  max-width: none !important;    
   display: block !important; 
   object-fit: contain;          
 }
@@ -52,18 +46,17 @@
   padding: 24px; 
   overflow-y: auto; 
   background-color: var(--app-bg, #f9fafb); 
-  width: 100%; 
+  /* width: 100%; */ /* <-- ΣΧΟΛΙΑΣΤΗΚΕ/ΑΦΑΙΡΕΘΗΚΕ ΑΥΤΗ Η ΓΡΑΜΜΗ */
   box-sizing: border-box;
 }
 
 @media (max-width: 768px) {
   .app-header { 
-    min-height: 55px; /* Προσαρμογή και για mobile */
+    min-height: 55px; 
     padding: 5px 16px; 
   }
   .app-logo {
-    height: 40px !important; /* Προσαρμογή και για mobile */
-    min-height: 35px !important;
+    height: 40px !important; 
   }
   .main-content-area { 
     padding: 16px; 

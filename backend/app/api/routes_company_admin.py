@@ -1,7 +1,7 @@
 # backend/app/api/routes_company_admin.py
 from flask import Blueprint, request, jsonify, current_app
 from app import db
-from app.models import User, Company, Interview, Candidate  # Πρόσθεσε Interview, Candidate
+from app.models import User, Company, Interview, Candidate
 from flask_login import login_required, current_user
 from functools import wraps
 from datetime import datetime, timezone as dt_timezone
@@ -9,20 +9,30 @@ from datetime import datetime, timezone as dt_timezone
 company_admin_bp = Blueprint('company_admin_api', __name__, url_prefix='/api/v1/company')
 
 
-# ΑΦΑΙΡΕΣΗ: logger = current_app.logger
-
 def company_admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        current_app.logger.info(f"[Decorator @company_admin_required ENTER] Path: {request.path}")
         if not current_user.is_authenticated:
+            current_app.logger.warning(
+                f"[Decorator @company_admin_required] User NOT AUTHENTICATED. Path: {request.path}")
             return jsonify({"error": "Authentication required"}), 401
+
+        current_app.logger.info(
+            f"[Decorator @company_admin_required] User: {current_user.username}, Role: {current_user.role}, Company ID: {current_user.company_id}")
+
         if current_user.role not in ['company_admin', 'superadmin']:
             current_app.logger.warning(
-                f"Access denied for user {current_user.id} ({current_user.username}) with role {current_user.role} to company admin route {request.path}.")
+                f"[Decorator @company_admin_required] Access DENIED. User {current_user.id} ({current_user.username}) with role {current_user.role} to company admin route {request.path}.")
             return jsonify({"error": "Company admin or superadmin access required"}), 403
+
         if current_user.role == 'company_admin' and not current_user.company_id:
-            current_app.logger.error(f"Company admin {current_user.id} ({current_user.username}) has no company_id!")
+            current_app.logger.error(
+                f"[Decorator @company_admin_required] CONFIG ERROR. Company admin {current_user.id} ({current_user.username}) has no company_id!")
             return jsonify({"error": "User configuration error: company admin not linked to a company."}), 500
+
+        current_app.logger.info(
+            f"[Decorator @company_admin_required EXIT - GRANTED] Path: {request.path}, User: {current_user.username}")
         return f(*args, **kwargs)
 
     return decorated_function
@@ -33,7 +43,9 @@ def company_admin_required(f):
 @company_admin_required
 def get_company_users():
     current_app.logger.info(
-        f"[COMPANY_ADMIN_ROUTE] /users GET accessed by: User ID: {current_user.id}, Role: {current_user.role}, Company ID: {current_user.company_id}")
+        f"--- HIT /api/v1/company/users (user: {current_user.id}, role: {current_user.role}, company_id from user: {current_user.company_id}) ---")
+    current_app.logger.info(f"Request args for company/users: {request.args}")
+
     target_company_id = None
     if current_user.role == 'superadmin':
         company_id_arg = request.args.get('company_id', type=int)
@@ -155,42 +167,58 @@ def toggle_company_user_status(user_id):
         return jsonify({"error": "Failed to update user status."}), 500
 
 
-# --- ΝΕΟ ENDPOINT ΓΙΑ ΛΙΣΤΑ ΣΥΝΕΝΤΕΥΞΕΩΝ ---
 @company_admin_bp.route('/interviews', methods=['GET'])
 @login_required
-@company_admin_required  # Company admin ή superadmin
+@company_admin_required
 def get_company_interviews():
+    current_app.logger.info(
+        f"--- HIT /api/v1/company/interviews (user: {current_user.id}, role: {current_user.role}, company_id from user: {current_user.company_id}) ---")
+    current_app.logger.info(f"Request args for company/interviews: {request.args}")
+
     target_company_id = None
     if current_user.role == 'superadmin':
         company_id_arg = request.args.get('company_id', type=int)
-        if not company_id_arg:
-            return jsonify({"error": "Superadmin must specify a 'company_id' query parameter to view interviews."}), 400
-        target_company_id = company_id_arg
-        if not db.session.get(Company, target_company_id):
-            return jsonify({"error": f"Company with ID {target_company_id} not found."}), 404
-    else:  # company_admin
+        # --- ΔΙΟΡΘΩΣΗ: Έλεγχος αν το company_id_arg είναι None ή 0 για superadmin ---
+        if company_id_arg is None:  # Αν ο superadmin δεν δώσει company_id, δεν πρέπει να είναι 400.
+            current_app.logger.info("Superadmin fetching interviews for ALL companies (no company_id provided).")
+            # Η λογική για all companies θα εφαρμοστεί παρακάτω στο query
+        elif company_id_arg == 0:  # Αν δώσει 0, μπορεί να σημαίνει κάτι ειδικό ή να το αγνοήσουμε
+            current_app.logger.info(
+                "Superadmin provided company_id=0 for interviews. Treating as 'all companies' or specific logic if intended.")
+        elif company_id_arg > 0:
+            target_company_id = company_id_arg
+            if not db.session.get(Company, target_company_id):
+                return jsonify({"error": f"Company with ID {target_company_id} not found."}), 404
+        else:  # Αρνητικό ή μη έγκυρο company_id
+            return jsonify({"error": f"Invalid company_id '{company_id_arg}' provided by superadmin."}), 400
+    else:
         target_company_id = current_user.company_id
+        if not target_company_id:  # Αυτό δεν θα έπρεπε να συμβεί λόγω του decorator
+            current_app.logger.error(f"Company admin {current_user.id} has no company_id in get_company_interviews!")
+            return jsonify({"error": "User configuration error."}), 500
 
-    current_app.logger.info(f"User {current_user.id} fetching interviews for company {target_company_id}.")
+    current_app.logger.info(
+        f"User {current_user.id} fetching interviews. Effective target_company_id for query: {target_company_id}.")
 
     page = request.args.get('page', 1, type=int)
     per_page = request.args.get('per_page', 15, type=int)
-    status_filter = request.args.get('status')  # e.g., PROPOSED, SCHEDULED, COMPLETED
+    status_filter = request.args.get('status')
 
-    # Query interviews through candidates of the target company
-    query = Interview.query.join(Candidate).filter(Candidate.company_id == target_company_id)
+    query = Interview.query.join(Candidate)  # Join με Candidate για να μπορούμε να φιλτράρουμε με company_id
+
+    if target_company_id:  # Εφάρμοσε το φίλτρο company_id μόνο αν έχει οριστεί
+        query = query.filter(Candidate.company_id == target_company_id)
 
     if status_filter:
         query = query.filter(
-            Interview.status == status_filter.upper())  # Assuming status is stored as uppercase enum string
+            Interview.status == status_filter.upper())
 
-    # Order by creation date or scheduled time
     query = query.order_by(Interview.created_at.desc())
 
     try:
         interviews_pagination = query.paginate(page=page, per_page=per_page, error_out=False)
         interviews_list = [interview.to_dict(include_sensitive=True) for interview in
-                           interviews_pagination.items]  # include_sensitive για τον admin
+                           interviews_pagination.items]
 
         return jsonify({
             "interviews": interviews_list,

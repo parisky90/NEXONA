@@ -3,7 +3,7 @@ import os
 from flask import Flask, jsonify, request, current_app as flask_current_app
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
-from flask_login import LoginManager, current_user  # Πρόσθεσε current_user εδώ αν δεν υπάρχει ήδη
+from flask_login import LoginManager, current_user
 from flask_mail import Mail
 from flask_cors import CORS
 from celery import Celery, Task
@@ -14,28 +14,25 @@ try:
     from .config import get_config
 except ImportError:
     from config import get_config
+    # --- ΠΡΟΣΘΗΚΗ LOGGING ΓΙΑ ΑΥΤΗ ΤΗΝ ΠΕΡΙΠΤΩΣΗ ---
+    import logging as temp_logger_init
 
-    print("Warning: Imported 'get_config' from top-level 'config'. Ensure 'app/config.py' is used if it exists.")
+    temp_logger_init.basicConfig(level=temp_logger_init.WARNING)
+    temp_logger_init.warning(
+        "Imported 'get_config' from top-level 'config' in app/__init__.py. Ensure 'app/config.py' is used if it exists.")
 
 db = SQLAlchemy()
 migrate = Migrate()
 login_manager = LoginManager()
-# login_manager.login_view = 'api.login' # Θα το χειριστούμε με το unauthorized_handler
-login_manager.session_protection = "strong"
 
 
-# --- ΝΕΑ ΣΥΝΑΡΤΗΣΗ ΓΙΑ ΧΕΙΡΙΣΜΟ UNAUTHORIZED ---
 @login_manager.unauthorized_handler
 def unauthorized():
-    # Όταν το @login_required αποτύχει, αντί για redirect, επέστρεψε 401 JSON
-    # Αυτό είναι πιο κατάλληλο για APIs και SPAs.
-    # Το frontend θα πρέπει να χειριστεί το 401 (π.χ., ανακατεύθυνση στη σελίδα login).
     flask_current_app.logger.warning(f"Unauthorized access attempt to: {request.path}")
     return jsonify(error="Unauthorized", message="Authentication is required to access this resource."), 401
 
 
-# --- ΤΕΛΟΣ ΝΕΑΣ ΣΥΝΑΡΤΗΣΗΣ ---
-
+login_manager.session_protection = "strong"
 mail = Mail()
 cors = CORS()
 
@@ -43,7 +40,7 @@ from .services.s3_service import S3Service
 
 s3_service_instance = S3Service()
 
-celery = Celery()
+celery = Celery(__name__)
 
 from .models import User
 
@@ -69,14 +66,20 @@ def make_celery(app_instance):
     global celery
     celery.conf.broker_url = app_instance.config['CELERY_BROKER_URL']
     celery.conf.result_backend = app_instance.config['CELERY_RESULT_BACKEND']
-    celery.conf.update(app_instance.config)
+    celery.conf.task_always_eager = app_instance.config.get('TASK_ALWAYS_EAGER', False)
+    celery.conf.task_eager_propagates = app_instance.config.get('TASK_EAGER_PROPAGATES', False)
+    celery.conf.timezone = app_instance.config.get('CELERY_TIMEZONE', 'UTC')
+
+    celery_flask_config = {key: value for key, value in app_instance.config.items() if
+                           key.startswith('CELERY_') or key.startswith('TASK_')}
+    celery.conf.update(celery_flask_config)
     celery.Task = ContextTask
+
     try:
-        celery.autodiscover_tasks(['tasks'], related_name=None, force=True)  # Άλλαξα το app.tasks σε tasks
+        celery.autodiscover_tasks(['tasks'], related_name=None, force=True)
         app_instance.logger.info("Celery autodiscover_tasks configured for 'tasks' package.")
     except Exception as e:
         app_instance.logger.error(f"Error during Celery autodiscover_tasks: {e}", exc_info=True)
-    app_instance.extensions['celery'] = celery
     return celery
 
 
@@ -146,11 +149,10 @@ def create_app(config_name_from_env=None):
     app.logger.info(f"NEXONA APP STARTUP (app/__init__.py via create_app):")
     app.logger.info(
         f"  Config Loaded: {selected_config_obj.__name__ if selected_config_obj else 'Minimal Fallback Config'}")
-    # ... (τα υπόλοιπα logs για config)
 
     db.init_app(app)
     migrate.init_app(app, db)
-    login_manager.init_app(app)  # Το unauthorized_handler θα χρησιμοποιηθεί τώρα
+    login_manager.init_app(app)
     mail.init_app(app)
 
     cors_origins_config = app.config.get('CORS_ORIGINS', '*')
@@ -166,16 +168,22 @@ def create_app(config_name_from_env=None):
     s3_service_instance.init_app(app)
     make_celery(app)
 
+    # --- ΕΙΣΑΓΩΓΗ BLUEPRINTS ΕΔΩ ---
     try:
         from .api.routes import bp as main_api_bp
         from .api.routes_admin import admin_bp
         from .api.routes_company_admin import company_admin_bp
 
+        # --- ΠΡΟΣΘΗΚΗ LOGGING ΓΙΑ ΤΗΝ ΕΙΣΑΓΩΓΗ ---
+        app.logger.info(f"DEBUG: main_api_bp imported in create_app: {main_api_bp}")
+        app.logger.info(f"DEBUG: admin_bp imported in create_app: {admin_bp}")
+        app.logger.info(f"DEBUG: company_admin_bp imported in create_app: {company_admin_bp}")
+
         if main_api_bp:
             app.register_blueprint(main_api_bp)
             app.logger.info(f"Registered main_api_bp with effective prefix: {main_api_bp.url_prefix}")
         else:
-            app.logger.error("main_api_bp not loaded or defined.")
+            app.logger.error("main_api_bp (aka 'bp' from routes.py) not loaded or defined.")
         if admin_bp:
             app.register_blueprint(admin_bp)
             app.logger.info(f"Registered admin_bp with effective prefix: {admin_bp.url_prefix}")
@@ -200,7 +208,7 @@ def create_app(config_name_from_env=None):
         return jsonify(error="Resource not found (404). Please check the URL."), 404
 
     @app.errorhandler(401)
-    def unauthorized_error_handler_app(error):  # Διαφορετικό όνομα από το login_manager.unauthorized_handler
+    def unauthorized_error_handler_app(error):
         app.logger.warning(f"App-level 401 Unauthorized: {request.path}")
         return jsonify(error="Unauthorized", message="Authentication is required to access this resource."), 401
 

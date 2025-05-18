@@ -2,9 +2,10 @@
 import React from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
 
-const COLORS = [ // Πιο "επαγγελματικά" χρώματα, μπορείτε να τα προσαρμόσετε
+const COLORS = [
   '#2563eb', '#16a34a', '#f97316', '#ca8a04', '#6d28d9', 
-  '#db2777', '#475569' 
+  '#db2777', '#475569', '#0891b2', '#d946ef', '#f59e0b',
+  '#84cc16', '#ef4444', '#6b7280', '#3b82f6' 
 ];
 
 const CustomTooltipContent = ({ active, payload, label }) => {
@@ -21,7 +22,6 @@ const CustomTooltipContent = ({ active, payload, label }) => {
   return null;
 };
 
-// CSS για το custom tooltip (μπορεί να μπει και σε global CSS αρχείο)
 const tooltipStyles = `
   .custom-recharts-tooltip {
     background-color: #ffffff;
@@ -41,44 +41,54 @@ const tooltipStyles = `
   }
 `;
 
-function CandidatesByStageChart({ data }) { // Αφαιρέθηκαν isLoading/error, θα τα χειρίζεται το DashboardPage
+function CandidatesByStageChart({ data }) {
+  console.log('CandidatesByStageChart props received, data:', data);
 
-  if (!data || data.length === 0) {
-    // Αυτή η περίπτωση θα πρέπει να καλύπτεται από το DashboardPage.jsx πλέον.
-    // Αλλά για ασφάλεια, αν κληθεί απευθείας χωρίς δεδομένα:
-    return <div style={{ height: '350px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>No data for chart.</div>;
+  if (!data || !Array.isArray(data) || data.length === 0) { 
+    console.log('CandidatesByStageChart: No data or data is not an array, rendering placeholder.');
+    return <div style={{ height: '350px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>No pipeline data to display for chart.</div>;
   }
 
-  // Βεβαιωθείτε ότι τα δεδομένα έχουν 'stage_name' και 'count'
   const chartData = data.map(item => ({
-    stage_name: item.stage_name || 'Unknown Stage', // Fallback για stage_name
-    count: typeof item.count === 'number' ? item.count : 0 // Fallback για count
+    stage_name: item.stage_name || 'Unknown Stage', 
+    count: typeof item.count === 'number' ? item.count : 0 
   }));
+  // ΑΦΗΝΟΥΜΕ ΑΥΤΟ ΤΟ FILTER ΠΡΟΣ ΤΟ ΠΑΡΟΝ ΓΙΑ ΝΑ ΔΟΥΜΕ ΤΙ ΣΥΜΒΑΙΝΕΙ
+  // .filter(item => item.count > 0); 
+
+  // Έλεγχος μετά το map, πριν το filter (αν το ενεργοποιήσεις ξανά)
+  if (chartData.length === 0 && data.length > 0) {
+     console.log('CandidatesByStageChart: chartData is empty AFTER mapping (original data was not empty but all counts might be zero). Original data:', data);
+     return <div style={{ height: '350px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>No candidates in any stage with count > 0.</div>;
+  } else if (chartData.length === 0) { // Αν και το αρχικό data ήταν άδειο
+    console.log('CandidatesByStageChart: chartData is empty (original data was also empty).');
+    return <div style={{ height: '350px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>No candidate data available for chart.</div>;
+  }
 
 
   return (
     <>
-      <style>{tooltipStyles}</style> {/* Ενσωμάτωση CSS για το tooltip */}
+      <style>{tooltipStyles}</style>
       <ResponsiveContainer width="100%" height={350}>
         <BarChart
-          data={chartData}
+          data={chartData} // Χρησιμοποίησε το chartData που μπορεί να είναι φιλτραρισμένο ή όχι
           margin={{
             top: 5,
-            right: 5, // Λιγότερο δεξιά για να μην κόβεται
-            left: 5,  // Λιγότερο αριστερά
-            bottom: 80, // Αυξημένο bottom margin για τα x-axis labels
+            right: 5, 
+            left: 5,  
+            bottom: 80, 
           }}
-          barSize={30} // Προσαρμόστε το πάχος των μπαρών
+          barSize={chartData.length < 5 ? 50 : (chartData.length < 10 ? 30 : 20) }
         >
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
           <XAxis 
             dataKey="stage_name" 
-            angle={-40}       // Λίγο μικρότερη γωνία
+            angle={-40}       
             textAnchor="end"
-            height={90}        // Αυξημένο ύψος για τα labels
-            interval={0}       // Εμφάνιση όλων των labels
+            height={90}        
+            interval={0}       
             tick={{ fontSize: 11, fill: '#475569' }} 
-            dy={5} // Μικρή προσαρμογή προς τα κάτω
+            dy={5} 
           />
           <YAxis 
             allowDecimals={false} 
@@ -87,13 +97,12 @@ function CandidatesByStageChart({ data }) { // Αφαιρέθηκαν isLoading/
               value: 'Number of Candidates', 
               angle: -90, 
               position: 'insideLeft', 
-              offset: 10, // Προσαρμογή του offset
+              offset: -5, 
               style: { textAnchor: 'middle', fontSize: 13, fill: '#334155' } 
             }}
-            width={70} // Δώστε λίγο παραπάνω πλάτος στον Y άξονα για το label
+            width={80} 
           />
           <Tooltip content={<CustomTooltipContent />} cursor={{ fill: 'rgba(206, 206, 206, 0.2)' }} />
-          {/* <Legend verticalAlign="top" height={36}/> */}
           <Bar dataKey="count" name="Candidates" radius={[5, 5, 0, 0]} >
             {chartData.map((entry, index) => (
               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />

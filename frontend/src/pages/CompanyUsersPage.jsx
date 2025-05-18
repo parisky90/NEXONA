@@ -2,8 +2,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../App'; 
 import { getCompanyUsers, createCompanyUser, toggleCompanyUserStatus } from '../services/companyAdminService';
-// import './AdminPages.css'; // Αν έχεις κοινό CSS για admin σελίδες
-// Εναλλακτικά, μπορείς να χρησιμοποιήσεις το App.css ή να φτιάξεις ένα CompanyUsersPage.css
 
 const ITEMS_PER_PAGE_COMPANY = 10;
 
@@ -16,7 +14,7 @@ function CompanyUsersPage() {
   const [totalPages, setTotalPages] = useState(0);
   const [totalUsers, setTotalUsers] = useState(0);
 
-  const [showCreateForm, setShowCreateForm] = useState(false); // <<< ΑΥΤΟ ΤΟ STATE ΕΛΕΓΧΕΙ ΤΗ ΦΟΡΜΑ
+  const [showCreateForm, setShowCreateForm] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [createError, setCreateError] = useState('');
   const [newUserFormData, setNewUserFormData] = useState({
@@ -28,18 +26,22 @@ function CompanyUsersPage() {
 
   const fetchCompanyUsersData = useCallback(async (page = 1) => {
     if (!currentUser || currentUser.role !== 'company_admin') {
+      console.warn("CompanyUsersPage: fetchCompanyUsersData - Access denied or user not company admin. Current user:", currentUser); // DEBUG LOG
       setError("Access denied or user not a company admin.");
       return;
     }
     setIsLoading(true); setError('');
     try {
       const params = { page, per_page: ITEMS_PER_PAGE_COMPANY };
-      const data = await getCompanyUsers(params); // Δεν χρειάζεται company_id, το παίρνει το backend από το session
+      console.log("CompanyUsersPage: Fetching company users with params:", params); // DEBUG LOG
+      const data = await getCompanyUsers(params);
+      console.log("CompanyUsersPage: Users data fetched:", data); // DEBUG LOG
       setUsers(data.users || []);
       setCurrentPage(data.current_page || 1);
       setTotalPages(data.total_pages || 0);
       setTotalUsers(data.total_users || 0);
     } catch (err) {
+      console.error("CompanyUsersPage: Error fetching company users:", err.response || err.message || err); // DEBUG LOG
       setError(err.error || err.message || 'Failed to load company users.');
       setUsers([]); setTotalPages(0); setTotalUsers(0);
     } finally {
@@ -48,8 +50,11 @@ function CompanyUsersPage() {
   }, [currentUser]);
 
   useEffect(() => {
-    if (currentUser && currentUser.role === 'company_admin') { // Έλεγχος ρόλου πριν το fetch
+    if (currentUser && currentUser.role === 'company_admin') {
+        console.log("CompanyUsersPage: useEffect triggered for fetchCompanyUsersData. Current user role:", currentUser.role); // DEBUG LOG
         fetchCompanyUsersData(1);
+    } else if (currentUser) {
+        console.warn("CompanyUsersPage: useEffect - User is not company admin, not fetching users. Role:", currentUser.role); // DEBUG LOG
     }
   }, [fetchCompanyUsersData, currentUser]);
 
@@ -70,8 +75,8 @@ function CompanyUsersPage() {
     setIsSubmitting(true);
     try {
       const { confirmPassword, ...payload } = newUserFormData;
-      await createCompanyUser(payload); // Το company_id θα προστεθεί στο backend
-      setShowCreateForm(false); // Κλείσιμο φόρμας μετά την επιτυχία
+      await createCompanyUser(payload);
+      setShowCreateForm(false);
       setNewUserFormData({ username: '', email: '', password: '', confirmPassword: '' });
       fetchCompanyUsersData(1); 
     } catch (err) {
@@ -101,28 +106,29 @@ function CompanyUsersPage() {
   };
 
   if (!currentUser || currentUser.role !== 'company_admin') {
-    return <div className="card-style error-message">Access Denied.</div>;
+    if (currentUser) {
+        console.warn("CompanyUsersPage: Rendering Access Denied. Current user role:", currentUser.role); // DEBUG LOG
+    } else {
+        console.warn("CompanyUsersPage: Rendering Access Denied (currentUser is null)."); // DEBUG LOG
+    }
+    return <div className="card-style error-message">Access Denied. You must be a Company Admin to view this page.</div>;
   }
 
   return (
-    // Εφάρμοσε .card-style από το App.css ή το DashboardPage.css (αν είναι global)
-    // ή δημιούργησε ένα AdminPages.css
     <div className="admin-page-container card-style"> 
       <h1>Manage Users for {currentUser.company_name || 'Your Company'}</h1>
 
-      {/* --- ΚΟΥΜΠΙ ΚΑΙ ΦΟΡΜΑ ΠΡΟΣΘΗΚΗΣ --- */}
       <div className="add-user-section" style={{ marginBottom: '1.5rem', paddingBottom: '1.5rem', borderBottom: '1px solid var(--border-color)' }}>
         {!showCreateForm && (
           <button 
             onClick={() => { setShowCreateForm(true); setCreateError(''); }} 
-            className="button-action button-primary" // Χρησιμοποίησε τις global κλάσεις
+            className="button-action button-primary"
           >
             + Add New User
           </button>
         )}
 
         {showCreateForm && (
-          // Το card-style εδώ είναι για να ξεχωρίζει η φόρμα
           <div className="create-user-form card-style" style={{ marginTop: '1rem', borderColor: 'var(--primary-color)' }}> 
             <h3 style={{marginTop:0, marginBottom:'1rem'}}>Create New User</h3>
             <form onSubmit={handleCreateUserSubmit}>
@@ -157,8 +163,6 @@ function CompanyUsersPage() {
           </div>
         )}
       </div>
-      {/* --- ΤΕΛΟΣ ΚΟΥΜΠΙΟΥ ΚΑΙ ΦΟΡΜΑΣ --- */}
-
 
       {isLoading && <div className="loading-placeholder">Loading users...</div>}
       {error && !isLoading && <p className="error-message">{error}</p>}
@@ -168,8 +172,8 @@ function CompanyUsersPage() {
 
       {!isLoading && users.length > 0 && (
         <>
-          <div className="table-responsive"> {/* Για scroll σε μικρές οθόνες */}
-            <table className="candidate-table"> {/* Χρησιμοποίησε το styling από το CandidateList.css */}
+          <div className="table-responsive">
+            <table className="candidate-table">
               <thead>
                 <tr>
                   <th>ID</th>

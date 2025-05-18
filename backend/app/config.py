@@ -1,16 +1,7 @@
 import os
 from dotenv import load_dotenv
 
-# --- ΦΟΡΤΩΣΗ .env ΣΤΗΝ ΑΡΧΗ ΤΟΥ CONFIG.PY ---
-# Αυτό εξασφαλίζει ότι οι μεταβλητές είναι διαθέσιmes πριν οριστούν οι κλάσεις Config.
-# Το backend/app/config.py είναι ένα επίπεδο μέσα από το root του backend όπου είναι το .env
-# Άρα, η διαδρομή προς το .env είναι '../.env' σε σχέση με το config.py
-# Ή, αν το WORKDIR είναι το backend/, τότε το .env είναι στο τρέχον directory.
-
-# Πιο ανθεκτικός τρόπος: Βρες το root directory του project
-# Υποθέτουμε ότι το config.py είναι στο app/config.py και το .env είναι στο backend/
-# Άρα, το .env είναι ένα επίπεδο πάνω από τον γονικό φάκελο του config.py
-basedir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))  # Αυτό θα είναι το backend/
+basedir = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 dotenv_path = os.path.join(basedir, '.env')
 
 if os.path.exists(dotenv_path):
@@ -20,24 +11,19 @@ else:
     print(f"WARNING (config.py): .env file not found at {dotenv_path}. Relying on system environment variables.")
 
 
-# --- ΤΕΛΟΣ ΦΟΡΤΩΣΗΣ .env ---
-
-
 class Config:
     APP_NAME = os.getenv('APP_NAME', 'NEXONA')
     SECRET_KEY = os.getenv('SECRET_KEY', 'your_default_secret_key_123!')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SQLALCHEMY_ECHO = os.getenv('SQLALCHEMY_ECHO', 'False').lower() in ('true', '1', 't')
-
-    # Database Configuration
     SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', 'postgresql://user:pass@host:port/db')
 
-    # Celery Configuration
+    # Celery Configuration (Changed to UPPERCASE)
     CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://redis:6379/0')
     CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://redis:6379/0')
-    CELERY_TIMEZONE = os.getenv('CELERY_TIMEZONE', 'UTC')
-    CELERY_TASK_ALWAYS_EAGER = os.getenv('CELERY_TASK_ALWAYS_EAGER', 'False').lower() in ('true', '1', 't')
-    CELERY_TASK_EAGER_PROPAGATES = os.getenv('CELERY_TASK_EAGER_PROPAGATES', 'False').lower() in ('true', '1', 't')
+    CELERY_TIMEZONE = os.getenv('CELERY_TIMEZONE', 'UTC') # Αυτό ήταν ήδη ΟΚ
+    TASK_ALWAYS_EAGER = os.getenv('CELERY_TASK_ALWAYS_EAGER', 'False').lower() in ('true', '1', 't') # Για Celery 5+ συχνά CELERY_TASK_ALWAYS_EAGER
+    TASK_EAGER_PROPAGATES = os.getenv('CELERY_TASK_EAGER_PROPAGATES', 'False').lower() in ('true', '1', 't') # CELERY_TASK_EAGER_PROPAGATES
 
     # Mail Configuration
     MAIL_SERVER = os.getenv('MAIL_SERVER')
@@ -47,17 +33,15 @@ class Config:
     MAIL_USERNAME = os.getenv('MAIL_USERNAME')
     MAIL_PASSWORD = os.getenv('MAIL_PASSWORD')
     MAIL_DEFAULT_SENDER = os.getenv('MAIL_DEFAULT_SENDER', '"NEXONA App" <noreply@example.com>')
-    # MAIL_DEBUG και MAIL_SUPPRESS_SEND είναι καλό να είναι boolean
     MAIL_DEBUG = os.getenv('MAIL_DEBUG', 'True').lower() in ('true', '1', 't')
-    MAIL_SUPPRESS_SEND = os.getenv('MAIL_SUPPRESS_SEND', 'False').lower() in (
-    'true', '1', 't')  # Default σε False για να στέλνει κανονικά
+    MAIL_SUPPRESS_SEND = os.getenv('MAIL_SUPPRESS_SEND', 'False').lower() in ('true', '1', 't')
 
     # AWS S3 Configuration
     S3_BUCKET = os.getenv('S3_BUCKET')
     S3_REGION = os.getenv('S3_REGION')
     AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
     AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
-    S3_ENDPOINT_URL = os.getenv('S3_ENDPOINT_URL')  # For MinIO or other S3-compatible
+    S3_ENDPOINT_URL = os.getenv('S3_ENDPOINT_URL')
 
     # Textkernel Configuration
     TEXTKERNEL_ACCOUNT_ID = os.getenv('TEXTKERNEL_ACCOUNT_ID')
@@ -66,48 +50,46 @@ class Config:
     TEXTKERNEL_ENABLED = os.getenv('TEXTKERNEL_ENABLED', 'True').lower() in ('true', '1', 't')
 
     # CORS Configuration
-    CORS_ORIGINS = os.getenv('CORS_ORIGINS', '*')  # Default to all origins for development
+    CORS_ORIGINS = os.getenv('CORS_ORIGINS', '*')
 
     # Logging Level
     LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
 
-    # Frontend URL (χρήσιμο για links σε emails)
+    # Frontend URL
     FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:5173')
 
 
 class DevelopmentConfig(Config):
     DEBUG = True
-    SQLALCHEMY_ECHO = os.getenv('SQLALCHEMY_ECHO', 'True').lower() in ('true', '1', 't')  # Enable echo for dev
-    MAIL_DEBUG = True  # Override για development
-    MAIL_SUPPRESS_SEND = os.getenv('MAIL_SUPPRESS_SEND', 'True').lower() in (
-    'true', '1', 't')  # Default σε True για dev
-    # CELERY_TASK_ALWAYS_EAGER = True # Για ευκολότερο debugging των tasks τοπικά
-    # CELERY_TASK_EAGER_PROPAGATES = True
+    SQLALCHEMY_ECHO = os.getenv('SQLALCHEMY_ECHO', 'True').lower() in ('true', '1', 't')
+    MAIL_DEBUG = True
+    MAIL_SUPPRESS_SEND = os.getenv('MAIL_SUPPRESS_SEND', 'True').lower() in ('true', '1', 't')
+    # Αν θέλεις να τρέχουν τα tasks συγχρονικά για ευκολότερο debug στο development:
+    # TASK_ALWAYS_EAGER = True
+    # TASK_EAGER_PROPAGATES = True
 
 
 class TestingConfig(Config):
     TESTING = True
     SQLALCHEMY_DATABASE_URI = os.getenv('TEST_DATABASE_URL', 'sqlite:///:memory:')
-    CELERY_TASK_ALWAYS_EAGER = True
-    CELERY_TASK_EAGER_PROPAGATES = True
+    TASK_ALWAYS_EAGER = True
+    TASK_EAGER_PROPAGATES = True
     MAIL_SUPPRESS_SEND = True
-    WTF_CSRF_ENABLED = False  # Συχνά απενεργοποιείται για tests
+    WTF_CSRF_ENABLED = False
 
 
 class ProductionConfig(Config):
     DEBUG = False
     SQLALCHEMY_ECHO = False
     MAIL_DEBUG = False
-    MAIL_SUPPRESS_SEND = False  # Σε production θέλουμε να στέλνει emails
-    # Βεβαιώσου ότι το SECRET_KEY είναι πολύ ισχυρό και ορίζεται στο .env για production
+    MAIL_SUPPRESS_SEND = False
 
 
-# Dictionary για εύκολη πρόσβαση στις configurations
 config_by_name = dict(
     development=DevelopmentConfig,
     testing=TestingConfig,
     production=ProductionConfig,
-    default=DevelopmentConfig  # Default configuration
+    default=DevelopmentConfig
 )
 
 
@@ -119,7 +101,4 @@ def get_config(config_name=None):
     if not config_obj:
         print(f"Warning: Config name '{config_name}' not found in config_by_name. Falling back to 'default'.")
         config_obj = config_by_name['default']
-
-    # Εκτύπωση για επιβεβαίωση ποια config φορτώνεται
-    # print(f"INFO (get_config): Loading configuration: {config_obj.__name__}")
     return config_obj

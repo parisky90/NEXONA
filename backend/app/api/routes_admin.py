@@ -4,14 +4,16 @@ from app import db
 from app.models import User, Company, CompanySettings
 from flask_login import login_required, current_user
 from functools import wraps
-from datetime import datetime, timezone as dt_timezone # Changed import to dt_timezone
+from datetime import datetime, timezone as dt_timezone
 
 admin_bp = Blueprint('admin_api', __name__, url_prefix='/api/v1/admin')
-# ΑΦΑΙΡΕΣΗ: logger = current_app.logger
 
 def superadmin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        # --- ΠΡΟΣΘΗΚΗ LOGGING ---
+        current_app.logger.debug(f"[Decorator @superadmin_required] Path: {request.path}, User: {current_user.username if current_user.is_authenticated else 'Anonymous'}, Role: {current_user.role if current_user.is_authenticated else 'N/A'}")
+        # --- ΤΕΛΟΣ ΠΡΟΣΘΗΚΗΣ ---
         if not current_user.is_authenticated or current_user.role != 'superadmin':
             current_app.logger.warning(
                 f"Superadmin access denied for user {current_user.username if current_user.is_authenticated else 'Anonymous'} to route {request.path}"
@@ -135,7 +137,7 @@ def update_company(company_id):
     if updated_fields_count == 0:
         return jsonify({"message": "No changes detected or no updatable fields provided."}), 304
     try:
-        company.updated_at = datetime.now(dt_timezone.utc) # Use dt_timezone
+        company.updated_at = datetime.now(dt_timezone.utc)
         db.session.commit()
         current_app.logger.info(f"Company '{company.name}' (ID: {company.id}) updated by superadmin {current_user.username}.")
         return jsonify(company.to_dict()), 200
@@ -172,7 +174,7 @@ def create_user_by_superadmin():
         new_user = User(
             username=username, email=email, role=role,
             is_active=is_active, company_id=final_company_id_for_user,
-            confirmed_on=datetime.now(dt_timezone.utc) if is_active else None # Use dt_timezone
+            confirmed_on=datetime.now(dt_timezone.utc) if is_active else None
         )
         new_user.set_password(password)
         db.session.add(new_user)
@@ -244,7 +246,7 @@ def update_user_by_superadmin(user_id):
             updated_fields_count += 1
     if 'is_active' in data and data['is_active'] != user_to_update.is_active:
         user_to_update.is_active = bool(data['is_active'])
-        if user_to_update.is_active and not user_to_update.confirmed_on: user_to_update.confirmed_on = datetime.now(dt_timezone.utc) # Use dt_timezone
+        if user_to_update.is_active and not user_to_update.confirmed_on: user_to_update.confirmed_on = datetime.now(dt_timezone.utc)
         updated_fields_count += 1
     if 'password' in data and data['password']:
         user_to_update.set_password(data['password'])
@@ -262,7 +264,7 @@ def update_user_by_superadmin(user_id):
         except (ValueError, TypeError): return jsonify({"error": "Invalid format for interview_reminder_lead_time_minutes."}), 400
     if updated_fields_count == 0: return jsonify({"message": "No updatable fields provided or values are the same."}), 304
     try:
-        user_to_update.updated_at = datetime.now(dt_timezone.utc) # Use dt_timezone
+        user_to_update.updated_at = datetime.now(dt_timezone.utc)
         db.session.commit()
         current_app.logger.info(f"User ID {user_id} updated by superadmin {current_user.username}.")
         return jsonify({"message": "User updated successfully", "user": user_to_update.to_dict(include_company_info=True)}), 200

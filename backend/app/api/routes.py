@@ -1,18 +1,31 @@
 # backend/app/api/routes.py
 from flask import Blueprint, request, jsonify, current_app, render_template
 from flask_login import login_user, logout_user, login_required, current_user
-from werkzeug.utils import secure_filename
-from app import db, s3_service_instance, celery
+# --- ΜΕΤΑΚΙΝΗΣΗ ΤΩΝ IMPORTS ΤΗΣ ΕΦΑΡΜΟΓΗΣ ΜΕΤΑ ΤΟΝ ΟΡΙΣΜΟ ΤΟΥ BLUEPRINT ---
+
+# --- ΟΡΙΣΜΟΣ BLUEPRINT ΣΤΗΝ ΑΡΧΗ ---
+bp = Blueprint('api', __name__, url_prefix='/api/v1')
+# --- ΠΡΟΣΘΗΚΗ LOGGING ΑΜΕΣΩΣ ΜΕΤΑ ΤΟΝ ΟΡΙΣΜΟ ---
+if current_app: # Έλεγχos αν το current_app είναι διαθέσιμο κατά την εισαγωγή
+    current_app.logger.info(f"DEBUG: Blueprint 'bp' defined in app.api.routes with url_prefix: {bp.url_prefix}")
+else:
+    # Αυτό το log πιθανότατα δεν θα εμφανιστεί ποτέ αν το πρόβλημα είναι κυκλική εξάρτηση
+    # που εμποδίζει την πλήρη αρχικοποίηση της εφαρμογής πριν από αυτό το σημείο.
+    import logging as temp_logger # Προσωρινό logger αν το current_app δεν είναι διαθέσιμο
+    temp_logger.basicConfig(level=temp_logger.INFO)
+    temp_logger.info(f"DEBUG: Blueprint 'bp' defined in app.api.routes (current_app not available yet). url_prefix: {bp.url_prefix}")
+
+
+# --- ΤΩΡΑ ΤΑ ΥΠΟΛΟΙΠΑ IMPORTS ΤΗΣ ΕΦΑΡΜΟΓΗΣ ---
+from app import db, s3_service_instance, celery # Βεβαιώσου ότι αυτό δεν προκαλεί κυκλικό import
 from app.models import (
     User, Company, Candidate, Position, CompanySettings,
     Interview, InterviewStatus
 )
-from app.config import Config
+from app.config import Config # Αυτό θα πρέπει να είναι ΟΚ καθώς το config δεν εξαρτάται από το app instance
 from datetime import datetime, timedelta, timezone as dt_timezone
 from zoneinfo import ZoneInfo
 import uuid
-
-bp = Blueprint('api', __name__, url_prefix='/api/v1')
 
 
 # === Authentication Routes ===
@@ -114,9 +127,8 @@ def session_status():
 @bp.route('/dashboard/summary', methods=['GET'])
 @login_required
 def dashboard_summary():
-    current_app.logger.info(
-        f"--- ENTERING /api/v1/dashboard/summary. User: {current_user.username if current_user.is_authenticated else 'Guest'}, Role: {current_user.role if current_user.is_authenticated else 'N/A'} ---")
-    current_app.logger.info(f"Request args: {request.args}")
+    current_app.logger.info(f"--- HIT /api/v1/dashboard/summary (user: {current_user.id if current_user.is_authenticated else 'Guest'}, role: {current_user.role if current_user.is_authenticated else 'N/A'}, company_id from user: {current_user.company_id if current_user.is_authenticated else 'N/A'}) ---")
+    current_app.logger.info(f"Request args for summary: {request.args}")
 
     if current_user.role != 'superadmin' and not current_user.company_id:
         current_app.logger.warning(f"Dashboard access DENIED (not SA, no company_id) for user {current_user.id}.")
@@ -126,7 +138,7 @@ def dashboard_summary():
     if current_user.role == 'superadmin':
         company_id_param_str = request.args.get('company_id')
         current_app.logger.info(f"Superadmin: company_id_param_str from request: '{company_id_param_str}'")
-        if company_id_param_str:  # Check if the parameter exists and is not empty
+        if company_id_param_str:
             try:
                 company_id_to_filter = int(company_id_param_str)
                 current_app.logger.info(
@@ -138,7 +150,7 @@ def dashboard_summary():
             except ValueError:
                 current_app.logger.warning(f"Superadmin provided invalid company_id: '{company_id_param_str}'")
                 return jsonify({"error": f"Invalid company_id format: {company_id_param_str}"}), 400
-    else:  # company_admin or other roles with company_id
+    else:
         company_id_to_filter = current_user.company_id
 
     current_app.logger.info(f"Final company_id_to_filter for dashboard summary: {company_id_to_filter}")
@@ -153,7 +165,7 @@ def dashboard_summary():
             Interview.status == InterviewStatus.SCHEDULED,
             Interview.scheduled_start_time > now_utc
         ).count()
-    else:  # Superadmin without a specific company_id filter
+    else:
         total_candidates = Candidate.query.count()
         active_positions = Position.query.filter_by(status='Open').count()
         upcoming_interviews_count = Interview.query.filter(
@@ -597,8 +609,6 @@ def propose_interview(candidate_uuid):
             current_app.logger.info(f"Candidate {candidate.candidate_id} status updated to 'Interview Proposed'.")
         db.session.commit()
         try:
-            # ΣΩΣΤΗ ΚΛΗΣΗ TASK ΜΕ ΒΑΣΗ ΤΟ ΟΝΟΜΑ ΠΟΥ ΟΡΙΖΕΤΑΙ ΣΤΟ DECORATOR ΤΟΥ TASK
-            # Βεβαιώσου ότι το task στο communication.py έχει name='tasks.communication.send_interview_proposal_email_task'
             task_name = 'tasks.communication.send_interview_proposal_email_task'
             celery.send_task(task_name, args=[interview.id])
             current_app.logger.info(f"Celery task '{task_name}' dispatched for interview {interview.id}")

@@ -35,9 +35,9 @@ function AdminUsersPage() {
     setIsLoadingCompanies(true);
     try {
       const data = await getCompanies(); 
-      setCompaniesForFilter(data.companies || []); 
+      setCompaniesForFilter(Array.isArray(data.companies) ? data.companies : []); 
     } catch (err) {
-      console.error("Failed to load companies for filter:", err.error || err.message || err);
+      console.error("AdminUsersPage: Failed to load companies for filter:", err.error || err.message || err);
       setCompaniesForFilter([]); 
     } finally {
       setIsLoadingCompanies(false);
@@ -49,6 +49,7 @@ function AdminUsersPage() {
   }, [fetchCompaniesForFilter]);
 
   const fetchUsersData = useCallback(async (page = 1) => {
+    console.log("AdminUsersPage: fetchUsersData called with page:", page, "roleFilter:", roleFilter, "companyFilter:", companyFilter);
     setIsLoading(true);
     setError('');
     try {
@@ -57,28 +58,32 @@ function AdminUsersPage() {
       
       if (companyFilter && companyFilter !== 'all') {
         if (companyFilter === 'unassigned') {
-          params.company_id = 0;
+          params.company_id = 0; 
         } else if (!isNaN(parseInt(companyFilter, 10))) {
           params.company_id = parseInt(companyFilter, 10);
         }
       }
-
+      console.log("AdminUsersPage: Fetching all users with params:", params);
       const data = await getAllUsers(params);
+      console.log("AdminUsersPage: All users data received:", data);
       setUsers(data.users || []);
       setCurrentPage(data.current_page || 1);
       setTotalPages(data.total_pages || 0);
       setTotalUsers(data.total_users || 0);
     } catch (err) {
+      console.error("AdminUsersPage: Error fetching all users:", err.error || err.message || err);
       setError(err.error || err.message || 'Failed to load users.');
       setUsers([]); setTotalPages(0); setTotalUsers(0);
     } finally {
       setIsLoading(false);
     }
-  }, [roleFilter, companyFilter]);
+  }, [roleFilter, companyFilter]); 
 
   useEffect(() => {
-    fetchUsersData(1);
-  }, [fetchUsersData]);
+    console.log("AdminUsersPage: useEffect for fetchUsersData triggered. Filters:", roleFilter, companyFilter);
+    fetchUsersData(1); 
+  }, [roleFilter, companyFilter, fetchUsersData]);
+
 
   const handleRoleFilterChange = (e) => {
     setRoleFilter(e.target.value === 'all' ? '' : e.target.value);
@@ -120,7 +125,7 @@ function AdminUsersPage() {
       const payload = { ...payloadBase };
 
       if (payload.role === 'superadmin') {
-        payload.company_id = null;
+        payload.company_id = null; 
       } else {
         if (!payload.company_id || payload.company_id === "all" || payload.company_id === "unassigned" || payload.company_id === "") {
           setCreateUserError('Company is required for roles "Company Admin" and "User".');
@@ -166,13 +171,15 @@ function AdminUsersPage() {
         <div>
           <label htmlFor="companyFilter" style={{ marginRight: '0.5rem', fontWeight: '500' }}>Company:</label>
           <select id="companyFilter" value={companyFilter || 'all'} onChange={handleCompanyFilterChange} className="input-light-gray" disabled={isLoadingCompanies}>
-            <option value="all">All Companies</option>
-            <option value="unassigned">Unassigned (No Company)</option> 
+            <option key="all-companies-filter-key" value="all">All Companies</option>
+            <option key="unassigned-filter-key" value="unassigned">Unassigned (No Company)</option> 
             {isLoadingCompanies ? (
               <option key="loading-companies-filter" disabled>Loading companies...</option>
             ) : (
-              companiesForFilter.length > 0 ? companiesForFilter.map(company => (
-                <option key={`filter-comp-${company.id}`} value={company.id}>{company.name} (ID: {company.id})</option>
+              companiesForFilter.length > 0 ? companiesForFilter.map((company, index) => (
+                <option key={company.company_id !== undefined ? `filter-comp-${company.company_id}` : `filter-comp-temp-${index}`} value={company.company_id}>
+                  {company.name} (ID: {company.company_id !== undefined ? company.company_id : 'N/A'})
+                </option>
               )) : <option key="no-companies-filter" disabled>No companies available</option>
             )}
           </select>
@@ -229,8 +236,8 @@ function AdminUsersPage() {
                     className="input-light-gray"
                   >
                     <option value="">{newUserFormData.role === 'superadmin' ? 'N/A for Superadmin' : (isLoadingCompanies ? 'Loading...' : 'Select Company')}</option>
-                    {!isLoadingCompanies && companiesForFilter.map(company => (
-                      <option key={`create-user-comp-${company.id}`} value={company.id}>{company.name}</option>
+                    {!isLoadingCompanies && companiesForFilter.map((company, index) => (
+                       <option key={company.company_id !== undefined ? `create-user-comp-${company.company_id}` : `create-user-comp-temp-${index}`} value={company.company_id}>{company.name}</option>
                     ))}
                   </select>
                 </div>
@@ -252,17 +259,16 @@ function AdminUsersPage() {
           </div>
         )}
       </div>
-
+    
       {isLoading && <div className="loading-placeholder">Loading users...</div>}
       {error && !isLoading && <p className="error-message">{error}</p>}
       
       {!isLoading && !error && users.length === 0 && (
         <p className="empty-list-message" style={{textAlign: 'center', marginTop: '1rem'}}>No users found matching the criteria.</p>
       )}
-
-      {!isLoading && users.length > 0 && (
+    
+      {!isLoading && !error && users.length > 0 && (
         <div className="table-responsive">
-          {/* Αφαίρεση του κενού πριν το <thead> */}
           <table className="candidate-table"><thead>
               <tr>
                 <th>ID</th>
@@ -280,7 +286,11 @@ function AdminUsersPage() {
                   <td>{user.username}</td>
                   <td>{user.email}</td>
                   <td>{user.role}</td>
-                  <td>{user.company_name || (user.role === 'superadmin' ? 'N/A (Superadmin)' : (user.company_id === null ? 'Unassigned' : `ID: ${user.company_id}`))}</td>
+                  <td>
+                    {user.role === 'superadmin' 
+                      ? 'N/A (Superadmin)' 
+                      : (user.company_name || (user.company_id === null || user.company_id === undefined ? 'Unassigned' : `ID: ${user.company_id}`))}
+                  </td>
                   <td>{user.is_active ? 'Yes' : 'No'}</td>
                   <td>{user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</td>
                 </tr>
@@ -288,7 +298,7 @@ function AdminUsersPage() {
             </tbody></table>
         </div>
       )}
-
+    
       {!isLoading && totalPages > 1 && (
         <div className="pagination-controls" style={{ marginTop: '1rem', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}>
           <button onClick={() => handlePageChange(currentPage - 1)} disabled={currentPage === 1 || isLoading} className="button-action button-secondary">Previous</button>

@@ -1,21 +1,21 @@
 // frontend/src/pages/AdminCompaniesPage.jsx
 import React, { useState, useEffect, useCallback } from 'react';
-import { getCompanies, createCompany } from '../services/adminService'; // Βεβαιώσου ότι το path είναι σωστό
+import { getCompanies, createCompany } from '../services/adminService';
 
 function AdminCompaniesPage() {
   const [companies, setCompanies] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(''); // Γενικό error για τη φόρτωση της λίστας
+  const [error, setError] = useState('');
   const [newCompanyName, setNewCompanyName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [createError, setCreateError] = useState(''); // Ειδικό error για τη δημιουργία
+  const [createError, setCreateError] = useState('');
 
   const fetchCompaniesData = useCallback(async () => {
     setIsLoading(true);
-    setError(''); // Καθάρισε το γενικό error πριν από κάθε fetch
+    setError('');
     try {
-      const data = await getCompanies(); // Επιστρέφει { companies: [...], ... }
-      setCompanies(data.companies || []); // Πάρε το array από το data.companies
+      const data = await getCompanies();
+      setCompanies(data.companies || []);
     } catch (err) {
       setError(err.error || err.message || 'Failed to load companies.');
       setCompanies([]);
@@ -31,16 +31,16 @@ function AdminCompaniesPage() {
   const handleCreateCompany = async (e) => {
     e.preventDefault();
     if (!newCompanyName.trim()) {
-      setCreateError('Company name cannot be empty.'); // Χρησιμοποίησε το createError
+      setCreateError('Company name cannot be empty.');
       return;
     }
     setIsSubmitting(true);
-    setCreateError(''); // Καθάρισε το createError
-    setError(''); // Καθάρισε και το γενικό error
+    setCreateError('');
+    setError('');
     try {
       await createCompany({ name: newCompanyName.trim() });
       setNewCompanyName('');
-      fetchCompaniesData(); // Επαναφόρτωση λίστας μετά τη δημιουργία
+      fetchCompaniesData();
     } catch (err) {
       setCreateError(err.error || err.message || 'Failed to create company.');
     } finally {
@@ -48,7 +48,6 @@ function AdminCompaniesPage() {
     }
   };
 
-  // Μηνύματα φόρτωσης/σφάλματος για τη λίστα
   let companyListContent;
   if (isLoading) {
     companyListContent = <div className="loading-placeholder card-style">Loading companies...</div>;
@@ -59,8 +58,7 @@ function AdminCompaniesPage() {
   } else {
     companyListContent = (
       <div className="table-responsive">
-        <table className="candidate-table"> {/* Βεβαιώσου ότι δεν υπάρχει κενό εδώ */}
-          <thead>
+        <table className="candidate-table"><thead>{/* NO WHITESPACE */}
             <tr>
               <th>ID</th>
               <th>Name</th>
@@ -70,11 +68,11 @@ function AdminCompaniesPage() {
               <th>Candidates</th>
               <th>Created At</th>
             </tr>
-          </thead>
-          <tbody>
+          </thead><tbody>{/* NO WHITESPACE */}
             {companies.map((company) => (
-              <tr key={company.company_id || company.id}> {/* Χρησιμοποίησε company_id ή id */}
-                <td>{company.company_id || company.id}</td>
+              // Το backend Company.to_dict() επιστρέφει company_id, οπότε το χρησιμοποιούμε.
+              <tr key={company.company_id !== undefined ? company.company_id : `comp-name-${company.name || Math.random()}`}>{/* NO WHITESPACE & UNIQUE KEY */}
+                <td>{company.company_id !== undefined ? company.company_id : 'N/A'}</td>
                 <td>{company.name}</td>
                 <td>{company.owner_user_id || 'N/A'}</td>
                 <td>{company.owner_username || 'N/A'}</td>
@@ -83,8 +81,7 @@ function AdminCompaniesPage() {
                 <td>{company.created_at ? new Date(company.created_at).toLocaleDateString() : 'N/A'}</td>
               </tr>
             ))}
-          </tbody>
-        </table>
+          </tbody></table>
       </div>
     );
   }

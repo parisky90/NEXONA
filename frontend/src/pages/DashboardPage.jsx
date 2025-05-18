@@ -1,5 +1,5 @@
 // frontend/src/pages/DashboardPage.jsx
-import React, { useState, useEffect, useCallback, useMemo } from 'react'; // Προσθήκη useMemo
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import DashboardSummary from '../components/DashboardSummary';
 import CandidateList from '../components/CandidateList';
 import SearchBar from '../components/SearchBar';
@@ -13,7 +13,7 @@ import './DashboardPage.css';
 function DashboardPage() {
   const { currentUser } = useAuth();
   const [summaryData, setSummaryData] = useState(null);
-  const [candidatesForNeedsReview, setCandidatesForNeedsReview] = useState([]); // Μετονομασία για σαφήνεια
+  const [candidatesForNeedsReview, setCandidatesForNeedsReview] = useState([]);
   
   const [isLoadingSummary, setIsLoadingSummary] = useState(true);
   const [summaryError, setSummaryError] = useState('');
@@ -24,35 +24,37 @@ function DashboardPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
-  const [totalCandidatesInList, setTotalCandidatesInList] = useState(0); // Μετονομασία
+  const [totalCandidatesInList, setTotalCandidatesInList] = useState(0);
   const ITEMS_PER_PAGE_DASH = 10;
 
-  // Χρησιμοποίησε useMemo για το companyIdParam για να μην επαναδημιουργείται αν δεν αλλάξει το currentUser
   const companyIdParam = useMemo(() => {
-    if (!currentUser) return undefined; // Αν δεν έχει φορτωθεί ο χρήστης ακόμα
+    if (!currentUser) return undefined;
     return currentUser.role === 'superadmin' ? undefined : currentUser.company_id;
   }, [currentUser]);
 
   const fetchSummaryData = useCallback(async () => {
-    if (currentUser === null) return; // Μην κάνεις fetch αν δεν έχει φορτωθεί ο χρήστης
+    if (currentUser === null) return;
     setIsLoadingSummary(true); setSummaryError('');
     try {
       const params = {};
       if (companyIdParam !== undefined) { 
         params.company_id = companyIdParam;
       }
+      console.log("DashboardPage: Fetching summary data with params:", params); // DEBUG LOG
       const res = await apiClient.get('/dashboard/summary', { params });
+      console.log("DashboardPage: Summary data fetched:", res.data); // DEBUG LOG
       setSummaryData(res.data);
     } catch (err) { 
       const errorMsg = err.response?.data?.error || 'Failed to load dashboard data.';
+      console.error("DashboardPage: Error fetching summary data:", err.response || err.message || err); // DEBUG LOG
       setSummaryError(errorMsg); 
       setSummaryData(null); 
     }
     finally { setIsLoadingSummary(false); }
-  }, [companyIdParam, currentUser]); // Πρόσθεσε το currentUser ως dependency
+  }, [companyIdParam, currentUser]);
 
   const fetchNeedsReviewCandidates = useCallback(async (page = 1, currentSearchTerm = '') => {
-    if (currentUser === null) return; // Μην κάνεις fetch αν δεν έχει φορτωθεί ο χρήστης
+    if (currentUser === null) return;
     setIsLoadingList(true); setListError('');
     try {
       const statusToFetch = 'NeedsReview';
@@ -63,40 +65,48 @@ function DashboardPage() {
       if (currentSearchTerm) {
         params.search = encodeURIComponent(currentSearchTerm);
       }
-      
+      console.log("DashboardPage: Fetching 'Needs Review' candidates with params:", params); // DEBUG LOG
       const response = await apiClient.get(`/candidates`, { params }); 
+      console.log("DashboardPage: 'Needs Review' candidates data received:", response.data); // DEBUG LOG
       
       setCandidatesForNeedsReview(Array.isArray(response.data.candidates) ? response.data.candidates : []);
       setTotalPages(response.data.total_pages || 0);
       setTotalCandidatesInList(response.data.total_results || 0);
       setCurrentPage(response.data.current_page || 1);
     } catch (err) { 
+      console.error("DashboardPage: Error fetching 'Needs Review' candidates:", err.response || err.message || err); // DEBUG LOG
       setListError(err.response?.data?.error || 'Failed to load candidates for review.'); 
       setCandidatesForNeedsReview([]); 
       setTotalPages(0); 
       setTotalCandidatesInList(0);
     }
     finally { setIsLoadingList(false); }
-  }, [companyIdParam, ITEMS_PER_PAGE_DASH, currentUser]); // Αφαίρεσα το searchTerm από εδώ, θα το χειριστεί το άλλο useEffect
+  }, [companyIdParam, ITEMS_PER_PAGE_DASH, currentUser]);
 
   useEffect(() => {
-    if (currentUser) { // Έλεγχος αν ο currentUser είναι διαθέσιμος
+    if (currentUser) {
+        console.log("DashboardPage: currentUser available, fetching summary data."); // DEBUG LOG
         fetchSummaryData();
+    } else {
+        console.log("DashboardPage: currentUser NOT available yet for summary fetch."); // DEBUG LOG
     }
-  }, [currentUser, fetchSummaryData]); // Εξάρτηση από currentUser και την memoized fetchSummaryData
+  }, [currentUser, fetchSummaryData]);
 
   useEffect(() => {
-    if (currentUser) { // Έλεγχος αν ο currentUser είναι διαθέσιμος
-        setCurrentPage(1); // Κάνε reset τη σελίδα όταν αλλάζει το searchTerm
+    if (currentUser) {
+        console.log("DashboardPage: currentUser available, fetching NeedsReview candidates. SearchTerm:", searchTerm); // DEBUG LOG
+        setCurrentPage(1);
         fetchNeedsReviewCandidates(1, searchTerm);
+    } else {
+        console.log("DashboardPage: currentUser NOT available yet for NeedsReview fetch."); // DEBUG LOG
     }
-  }, [currentUser, searchTerm, fetchNeedsReviewCandidates]); // Εξάρτηση από currentUser, searchTerm και την memoized fetchNeedsReviewCandidates
+  }, [currentUser, searchTerm, fetchNeedsReviewCandidates]);
   
 
   const handleSearchChange = (e) => setSearchTerm(e.target.value);
   const handleSearchSubmit = (e) => { 
     if (e) e.preventDefault(); 
-    setCurrentPage(1); // Reset page on new search
+    setCurrentPage(1);
     fetchNeedsReviewCandidates(1, searchTerm); 
   };
   const handlePageChange = (newPage) => { 
@@ -106,30 +116,27 @@ function DashboardPage() {
   };
   const handleUploadSuccess = () => { 
     setTimeout(() => { 
-        if (currentUser) { // Έλεγχος για currentUser
+        if (currentUser) {
             fetchSummaryData(); 
-            fetchNeedsReviewCandidates(1, ''); // Φόρτωσε την πρώτη σελίδα των NeedsReview
+            fetchNeedsReviewCandidates(1, '');
             setSearchTerm(''); 
         }
     }, 1800); 
   };
   const handleCandidateDeletedOnDashboard = () => { 
-    if (currentUser) { // Έλεγχος για currentUser
+    if (currentUser) {
         fetchSummaryData(); 
-        fetchNeedsReviewCandidates(currentPage, searchTerm); // Ξαναφόρτωσε την τρέχουσα σελίδα
+        fetchNeedsReviewCandidates(currentPage, searchTerm);
     }
   };
 
   const keyStatisticsForDisplay = summaryData ? {
     open_positions_count: summaryData.active_positions,
-    // Πρόσθεσε κι άλλα αν τα επιστρέφει το /summary, π.χ.:
-    // interview_reach_percentage: summaryData.interview_reach_percentage,
-    // avg_days_to_interview: summaryData.avg_days_to_interview,
   } : null;
 
   const candidatesByStageForChart = summaryData ? summaryData.candidates_by_stage : [];
 
-  if (!currentUser) { // Αν ο χρήστης δεν έχει φορτωθεί ακόμα (π.χ. κατά το αρχικό loading του App.jsx)
+  if (!currentUser) {
     return <div className="loading-placeholder card-style">Initializing Dashboard...</div>;
   }
 
