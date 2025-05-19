@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cancel Interview - {{ company_name }}</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }
+        .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); max-width: 600px; margin: auto; }
+        h1 { color: #d9534f; } /* Red for cancellation */
+        label { display: block; margin-bottom: 5px; font-weight: bold; }
+        textarea, select { width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .button { padding: 10px 15px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+        .button-danger { background-color: #d9534f; color: white; }
+        .button-secondary { background-color: #ccc; color: #333; margin-left: 10px; }
+        .radio-group label { font-weight: normal; margin-right: 15px; }
+        .radio-group input[type="radio"] { margin-right: 5px; }
+        .form-actions { text-align: right; margin-top: 20px;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Cancel Interview</h1>
+        <p>Hello {{ candidate_name }},</p>
+        <p>You are about to cancel your interview with {{ company_name }} scheduled for <strong>{{ scheduled_time_display }}</strong> (Interview ID: {{ interview_id }}).</p>
+
+        <form method="POST" action="{{ url_for('api.cancel_interview_by_candidate', cancel_token=cancel_token) }}">
+            <div>
+                <label for="cancellation_reason">Reason for cancellation (optional):</label>
+                <textarea id="cancellation_reason" name="cancellation_reason" rows="3"></textarea>
+            </div>
+
+            <div class="radio-group">
+                <p><strong>Would you like to reschedule?</strong></p>
+                <label><input type="radio" name="reschedule_preference" value="request_reschedule" checked> Yes, I would like to reschedule.</label><br>
+                <label><input type="radio" name="reschedule_preference" value="no_reschedule"> No, I am no longer available/interested.</label><br>
+                <label><input type="radio" name="reschedule_preference" value="unknown"> I'm not sure / Other.</label>
+            </div>
+
+            <p style="font-size: 0.9em; color: #555;">
+                If you choose to reschedule, a recruiter from {{ company_name }} will contact you.
+                If you choose not to reschedule, this interview will be fully cancelled.
+            </p>
+
+            <div class="form-actions">
+                <button type="submit" class="button button-danger">Confirm Cancellation</button>
+                <!-- Optional: Add a "Go Back" or "Do Not Cancel" link -->
+                 <a href="javascript:history.back()" class="button button-secondary" style="text-decoration: none;">Go Back (Do Not Cancel)</a>
+            </div>
+        </form>
+        <hr style="margin-top: 20px; margin-bottom: 10px;">
+        <p style="font-size:0.8em; text-align:center;">If you did not intend to cancel, please close this page or use the "Go Back" button.</p>
+    </div>
+</body>
+</html>

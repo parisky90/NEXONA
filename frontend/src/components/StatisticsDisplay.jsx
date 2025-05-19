@@ -51,7 +51,7 @@ function StatisticsDisplay({ stats, isLoading }) {
       {stats.stuck_in_needs_review_X_days !== undefined && stats.stuck_in_needs_review_threshold_days !== undefined && (
         <div className="stat-item card-style">
           {/* ΔΙΟΡΘΩΣΗ ΕΔΩ */}
-          <h4>Awaiting Review (>{stats.stuck_in_needs_review_threshold_days} days)</h4>
+          <h4>Awaiting Review ({'>'}{stats.stuck_in_needs_review_threshold_days} days)</h4>
           <p className="stat-value">
             {stats.stuck_in_needs_review_X_days}
           </p>

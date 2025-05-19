@@ -59,7 +59,7 @@ function CandidatesByStageChart({ data }) {
   if (filteredChartData.length === 0) {
     // console.log('CandidatesByStageChart: chartData is empty AFTER filtering for count > 0. Original mapped data:', chartData);
     // ΔΙΟΡΘΩΣΗ ΕΔΩ
-    return <div style={{ height: '350px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>No candidates in any active stage with count > 0.</div>;
+    return <div style={{ height: '350px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>No candidates in any active stage with count {'>'} 0.</div>;
   }
 
 

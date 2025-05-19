@@ -2,12 +2,13 @@
 import enum
 from flask_login import UserMixin, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from app import db
+from app import db, s3_service_instance  # Βεβαιώσου ότι το s3_service_instance είναι διαθέσιμο εδώ
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.schema import UniqueConstraint
 from sqlalchemy.orm.attributes import flag_modified
 import uuid
 from datetime import datetime, timezone as dt_timezone, timedelta
+from flask import current_app  # Για πρόσβαση στο s3_service_instance μέσω app context
 
 candidate_position_association = db.Table('candidate_position_association',
                                           db.Column('candidate_id', UUID(as_uuid=True),
@@ -48,8 +49,8 @@ class Company(db.Model):
             'settings': self.settings.to_dict() if self.settings else None,
             'owner_user_id': self.owner_user_id,
             'owner_username': owner_username,
-            'user_count': self.users.count(),
-            'candidate_count': self.candidates.count()
+            'user_count': self.users.count(),  # Μπορεί να είναι αργό για πολλές εταιρείες, ίσως με subquery
+            'candidate_count': self.candidates.count()  # Ομοίως
         }
 
 
@@ -112,7 +113,7 @@ class User(UserMixin, db.Model):
             'interview_reminder_lead_time_minutes': self.interview_reminder_lead_time_minutes,
             'confirmed_on': self.confirmed_on.isoformat() if self.confirmed_on else None
         }
-        if include_company_info and self.company:
+        if include_company_info and self.company:  # Το self.company φορτώνεται μέσω backref
             data['company_name'] = self.company.name
         return data
 
@@ -137,24 +138,23 @@ class Candidate(db.Model):
     submission_date = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(dt_timezone.utc), index=True)
     updated_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(dt_timezone.utc),
                            onupdate=lambda: datetime.now(dt_timezone.utc))
-    # --- ΠΑΛΙΑ ΠΕΔΙΑ ΣΥΝΕΝΤΕΥΞΗΣ - ΜΠΟΡΟΥΝ ΝΑ ΑΦΑΙΡΕΘΟΥΝ ΜΕΛΛΟΝΤΙΚΑ ---
+    status_last_changed_date = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(
+        dt_timezone.utc))  # ΝΕΟ ΠΕΔΙΟ ΠΟΥ ΠΡΟΣΤΕΘΗΚΕ ΣΤΟ routes.py
     interview_datetime = db.Column(db.DateTime(timezone=True), nullable=True)
     interview_location = db.Column(db.String(255), nullable=True)
-    interview_type = db.Column(db.String(100),
-                               nullable=True)  # Αυτό μπορεί να παραμείνει ως default type αν δεν οριστεί στο Interview
-    interviewers = db.Column(JSONB, nullable=True, default=list)  # Αυτό ίσως μεταφερθεί στο Interview model
-    # --- ΤΕΛΟΣ ΠΑΛΙΩΝ ΠΕΔΙΩΝ ---
+    interview_type = db.Column(db.String(100), nullable=True)
+    interviewers = db.Column(JSONB, nullable=True, default=list)
     offers = db.Column(JSONB, nullable=True, default=list)
-    evaluation_rating = db.Column(db.String(50), nullable=True)  # Γενική αξιολόγηση υποψηφίου
+    evaluation_rating = db.Column(db.String(50), nullable=True)
     notes = db.Column(db.Text, nullable=True)
     hr_comments = db.Column(db.Text, nullable=True)
-    confirmation_uuid = db.Column(UUID(as_uuid=True), default=uuid.uuid4, unique=True,
-                                  nullable=False)  # Για παλιές επιβεβαιώσεις, ίσως αχρείαστο
-    candidate_confirmation_status = db.Column(db.String(20), nullable=True)  # Γενικό status επιβεβαίωσης
+    confirmation_uuid = db.Column(UUID(as_uuid=True), default=uuid.uuid4, unique=True, nullable=False)
+    candidate_confirmation_status = db.Column(db.String(50), nullable=True)  # ΑΛΛΑΓΗ string(50) από string(20)
     history = db.Column(JSONB, nullable=True, default=list)
 
     positions = db.relationship('Position', secondary=candidate_position_association, back_populates='candidates',
                                 lazy='dynamic')
+    # Το relationship 'interviews' ορίζεται στο Interview model μέσω backref
 
     __table_args__ = (
         UniqueConstraint('email', 'company_id', name='uq_candidates_email_company_id'),
@@ -180,48 +180,103 @@ class Candidate(db.Model):
             else:
                 final_actor_username = "System"
         elif final_actor_id and not final_actor_username:
-            actor = db.session.get(User, final_actor_id)
-            if actor:
-                final_actor_username = actor.username
-            else:
+            # Προσπάθησε να πάρεις τον χρήστη από τη βάση αν υπάρχει ID
+            # Χρειάζεται προσοχή εδώ αν εκτελείται εκτός app_context (π.χ. Celery task χωρίς context)
+            try:
+                actor = db.session.get(User, final_actor_id) if db.session else None  # Προσεκτικός έλεγχος για session
+                if actor:
+                    final_actor_username = actor.username
+                else:
+                    final_actor_username = f"User (ID: {final_actor_id})"
+            except Exception:  # Ευρύ except για να μην σπάσει αν δεν υπάρχει session ή db
                 final_actor_username = f"User (ID: {final_actor_id})"
 
         event_entry = {
             "timestamp": datetime.now(dt_timezone.utc).isoformat(),
             "event_type": event_type, "description": description,
-            "actor_id": final_actor_id,
-            "actor_username": final_actor_username,
+            "actor_id": final_actor_id,  # Μπορεί να είναι None
+            "actor_username": final_actor_username,  # Μπορεί να είναι "System" ή "User (ID: X)"
             "details": details or {}
         }
         if isinstance(self.history, list):
             self.history.append(event_entry)
-        else:
+        else:  # Αν για κάποιο λόγο δεν είναι λίστα (π.χ. null από τη βάση)
             self.history = [event_entry]
         flag_modified(self, "history")
 
-    def to_dict(self, include_cv_url=False, cv_url=None):
+    # *** ΔΙΟΡΘΩΜΕΝΗ ΜΕΘΟΔΟΣ to_dict ***
+    def to_dict(self, include_cv_url=False, cv_url=None, include_history=False, include_interviews=False,
+                include_company_info_for_candidate=False):
         data = {
             'candidate_id': str(self.candidate_id),
             'company_id': self.company_id,
-            'first_name': self.first_name, 'last_name': self.last_name, 'full_name': self.full_name,
-            'email': self.email, 'phone_number': self.phone_number, 'age': self.age,
-            'education_summary': self.education_summary, 'experience_summary': self.experience_summary,
-            'skills_summary': self.skills_summary, 'languages': self.languages, 'seminars': self.seminars,
-            'cv_original_filename': self.cv_original_filename, 'cv_storage_path': self.cv_storage_path,
+            'first_name': self.first_name,
+            'last_name': self.last_name,
+            'full_name': self.full_name,
+            'email': self.email,
+            'phone_number': self.phone_number,
+            'age': self.age,
+            'education_summary': self.education_summary,
+            'experience_summary': self.experience_summary,
+            'skills_summary': self.skills_summary,
+            'languages': self.languages,
+            'seminars': self.seminars,
+            'cv_original_filename': self.cv_original_filename,
+            'cv_storage_path': self.cv_storage_path,
             'current_status': self.current_status,
             'submission_date': self.submission_date.isoformat() if self.submission_date else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-            # Αφαίρεση παλιών πεδίων συνέντευξης από το candidate.to_dict(), θα έρχονται από το interview.to_dict()
+            'status_last_changed_date': self.status_last_changed_date.isoformat() if hasattr(self,
+                                                                                             'status_last_changed_date') and self.status_last_changed_date else None,
+            # Αφαίρεση παλιών πεδίων συνέντευξης, θα έρχονται από το interview.to_dict()
+            # 'interview_datetime': self.interview_datetime.isoformat() if self.interview_datetime else None,
+            # 'interview_location': self.interview_location,
+            # 'interview_type': self.interview_type,
+            # 'interviewers': self.interviewers,
             'offers': self.offers if self.offers else [],
-            'evaluation_rating': self.evaluation_rating,  # Γενική αξιολόγηση
-            'notes': self.notes, 'hr_comments': self.hr_comments,
-            'candidate_confirmation_status': self.candidate_confirmation_status,  # Γενικό status
-            'history': self.history if self.history else [],
-            'positions': [pos.position_name for pos in self.positions.all()] if self.positions else [],
-            'interviews': [interview.to_dict(include_slots=True) for interview in  # include_slots=True
-                           self.interviews.order_by(Interview.created_at.desc()).all()] if self.interviews else []
+            'evaluation_rating': self.evaluation_rating,
+            'notes': self.notes,
+            'hr_comments': self.hr_comments,
+            'candidate_confirmation_status': self.candidate_confirmation_status,
+            'positions': [pos.to_dict() for pos in self.positions.all()] if self.positions else []
+            # Καλεί το to_dict του Position
         }
-        if include_cv_url and cv_url: data['cv_url'] = cv_url
+
+        if include_company_info_for_candidate and self.company:
+            data['company'] = self.company.to_dict()
+
+        if include_cv_url:
+            if cv_url:
+                data['cv_url'] = cv_url
+            elif self.cv_storage_path:
+                try:
+                    # Προσοχή: Το s3_service_instance πρέπει να είναι προσβάσιμο εδώ.
+                    # Αν δεν είναι global, πρέπει να περαστεί ή να ληφθεί από το current_app.
+                    # Για απλότητα, υποθέτουμε ότι είναι διαθέσιμο μέσω import.
+                    data['cv_url'] = s3_service_instance.create_presigned_url(self.cv_storage_path)
+                except Exception as e:
+                    if current_app:  # Log μόνο αν υπάρχει app context
+                        current_app.logger.error(
+                            f"Error creating presigned URL for {self.cv_storage_path} in Candidate.to_dict: {e}")
+                    data['cv_url'] = None  # Ασφαλής επιστροφή αν αποτύχει
+            else:
+                data['cv_url'] = None
+
+        if include_history:
+            data['history'] = self.history if isinstance(self.history, list) else []
+
+        if include_interviews:
+            # Η κλήση self.interviews.order_by(...) προϋποθέτει lazy='dynamic' στο relationship
+            # Το relationship 'interviews' ορίζεται στο Interview model μέσω backref, οπότε η ταξινόμηση γίνεται εκεί.
+            # Εδώ απλά παίρνουμε τα interviews.
+            # Το self.interviews είναι ήδη λίστα (ή SQLAlchemy collection) αν το lazy loading είναι 'select' ή 'joined'.
+            # Αν είναι 'dynamic', τότε self.interviews είναι query object.
+            interviews_list = self.interviews.order_by(Interview.created_at.desc()).all() if hasattr(self.interviews,
+                                                                                                     'order_by') else self.interviews
+            data['interviews'] = [
+                interview.to_dict(include_slots=True, include_candidate_info=False, include_recruiter_info=True,
+                                  include_position_info=True) for interview in interviews_list]
+
         return data
 
 
@@ -231,13 +286,14 @@ class Position(db.Model):
     company_id = db.Column(db.Integer, db.ForeignKey('companies.id', ondelete='CASCADE'), nullable=False)
     position_name = db.Column(db.String(150), nullable=False)
     description = db.Column(db.Text, nullable=True)
-    status = db.Column(db.String(50), default='Open', nullable=True)  # π.χ. Open, Closed, OnHold
+    status = db.Column(db.String(50), default='Open', nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(dt_timezone.utc))
     updated_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(dt_timezone.utc),
                            onupdate=lambda: datetime.now(dt_timezone.utc))
 
     candidates = db.relationship('Candidate', secondary=candidate_position_association, back_populates='positions',
                                  lazy='dynamic')
+    # Το relationship 'interviews' ορίζεται στο Interview model μέσω backref
 
     __table_args__ = (
         UniqueConstraint('position_name', 'company_id', name='uq_position_name_company_id'),
@@ -245,40 +301,37 @@ class Position(db.Model):
 
     def to_dict(self):
         return {
-            'position_id': self.position_id,  # Χρησιμοποίησε position_id αντί για id για συνέπεια
+            'position_id': self.position_id,
             'company_id': self.company_id,
-            'position_name': self.position_name,  # Χρησιμοποίησε position_name αντί για name
+            'position_name': self.position_name,
             'description': self.description,
             'status': self.status,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
-            'candidate_count': self.candidates.count()
+            'candidate_count': self.candidates.count()  # Μπορεί να είναι αργό
         }
 
 
 class InterviewStatus(enum.Enum):
     PROPOSED = "PROPOSED"
     SCHEDULED = "SCHEDULED"
-    COMPLETED = "COMPLETED"
-    CANDIDATE_REJECTED_ALL = "CANDIDATE_REJECTED_ALL"
+    COMPLETED = "COMPLETED"  # Ολοκληρώθηκε η συνέντευξη, αναμονή αξιολόγησης
+    CANDIDATE_REJECTED_ALL = "CANDIDATE_REJECTED_ALL"  # Ο υποψήφιος απέρριψε όλα τα slots
     CANCELLED_BY_RECRUITER = "CANCELLED_BY_RECRUITER"
     CANCELLED_BY_CANDIDATE = "CANCELLED_BY_CANDIDATE"
-    EXPIRED = "EXPIRED"
-    EVALUATION_POSITIVE = "EVALUATION_POSITIVE"
-    EVALUATION_NEGATIVE = "EVALUATION_NEGATIVE"
+    EXPIRED = "EXPIRED"  # Η πρόταση έληξε χωρίς απάντηση
+    EVALUATION_POSITIVE = "EVALUATION_POSITIVE"  # Αξιολόγηση θετική
+    EVALUATION_NEGATIVE = "EVALUATION_NEGATIVE"  # Αξιολόγηση αρνητική
+    CANCELLED_DUE_TO_REEVALUATION = "CANCELLED_DUE_TO_REEVALUATION"  # Νέο status
 
 
-# --- ΝΕΟ MODEL: InterviewSlot ---
 class InterviewSlot(db.Model):
     __tablename__ = 'interview_slots'
     id = db.Column(db.Integer, primary_key=True)
     interview_id = db.Column(db.Integer, db.ForeignKey('interviews.id', ondelete='CASCADE'), nullable=False)
-    start_time = db.Column(db.DateTime(timezone=True), nullable=False)  # Αποθήκευση πάντα σε UTC
-    end_time = db.Column(db.DateTime(timezone=True), nullable=False)  # Αποθήκευση πάντα σε UTC
-    is_selected = db.Column(db.Boolean, default=False, nullable=False)  # True αν ο υποψήφιος επέλεξε αυτό το slot
-
-    # Δεν χρειάζεται backref εδώ αν δεν το καλείς από το InterviewSlot προς το Interview object.
-    # Το relationship είναι στο Interview model (interview.slots).
+    start_time = db.Column(db.DateTime(timezone=True), nullable=False)
+    end_time = db.Column(db.DateTime(timezone=True), nullable=False)
+    is_selected = db.Column(db.Boolean, default=False, nullable=False)
 
     def to_dict(self):
         return {
@@ -290,25 +343,17 @@ class InterviewSlot(db.Model):
         }
 
 
-# --- ΤΕΛΟΣ ΝΕΟΥ MODEL ---
-
 class Interview(db.Model):
     __tablename__ = 'interviews'
     id = db.Column(db.Integer, primary_key=True)
     candidate_id = db.Column(UUID(as_uuid=True), db.ForeignKey('candidates.candidate_id', ondelete='CASCADE'),
                              nullable=False)
-    # --- ΠΡΟΣΘΗΚΗ company_id στο Interview ---
     company_id = db.Column(db.Integer, db.ForeignKey('companies.id', ondelete='CASCADE'), nullable=False)
-    # --- ΤΕΛΟΣ ΠΡΟΣΘΗΚΗΣ ---
     position_id = db.Column(db.Integer, db.ForeignKey('positions.position_id', ondelete='SET NULL'), nullable=True)
-    recruiter_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=False)
+    recruiter_id = db.Column(db.Integer, db.ForeignKey('users.id', ondelete='SET NULL'),
+                             nullable=True)  # Nullable αν ο recruiter διαγραφεί
 
-    # Αφαίρεση των proposed_slot_X_start/end από εδώ, θα είναι στο InterviewSlot
-    # proposed_slot_1_start = db.Column(db.DateTime(timezone=True), nullable=True)
-    # ...
-
-    scheduled_start_time = db.Column(db.DateTime(timezone=True), nullable=True,
-                                     index=True)  # Αυτό θα οριστεί όταν ο υποψήφιος επιλέξει ένα slot
+    scheduled_start_time = db.Column(db.DateTime(timezone=True), nullable=True, index=True)
     scheduled_end_time = db.Column(db.DateTime(timezone=True), nullable=True)
 
     location = db.Column(db.String(255), nullable=True)
@@ -318,53 +363,58 @@ class Interview(db.Model):
     cancellation_reason_candidate = db.Column(db.Text, nullable=True)
 
     evaluation_notes = db.Column(db.Text, nullable=True)
-    evaluation_rating_interview = db.Column(db.String(50), nullable=True)
+    evaluation_rating_interview = db.Column(db.String(50), nullable=True)  # Αξιολόγηση συγκεκριμένης συνέντευξης
 
     status = db.Column(db.Enum(InterviewStatus), default=InterviewStatus.PROPOSED, nullable=False, index=True)
-    confirmation_token = db.Column(db.String(36), unique=True, nullable=True,
-                                   index=True)  # Για την επιβεβαίωση από τον υποψήφιο
+
+    confirmation_token = db.Column(db.String(64), unique=True, nullable=True,
+                                   index=True)  # Αύξηση μεγέθους για token_urlsafe
     token_expiration = db.Column(db.DateTime(timezone=True), nullable=True)
+
+    # Νέα πεδία για cancellation token
+    cancellation_token = db.Column(db.String(64), unique=True, nullable=True, index=True)
+    cancellation_token_expiration = db.Column(db.DateTime(timezone=True), nullable=True)
 
     created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(dt_timezone.utc))
     updated_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(dt_timezone.utc),
                            onupdate=lambda: datetime.now(dt_timezone.utc))
 
+    # Relationships
     candidate = db.relationship('Candidate',
                                 backref=db.backref('interviews', lazy='dynamic', cascade='all, delete-orphan',
                                                    order_by="desc(Interview.created_at)"))
-    position = db.relationship('Position', backref=db.backref('interviews', lazy='dynamic'))
+    position = db.relationship('Position',
+                               backref=db.backref('interviews', lazy='dynamic'))  # Ένα Interview ανήκει σε μία Position
     recruiter = db.relationship('User', foreign_keys=[recruiter_id],
-                                backref=db.backref('scheduled_interviews', lazy='dynamic'))
-    # --- ΝΕΟ RELATIONSHIP ΜΕ InterviewSlot ---
+                                backref=db.backref('recruited_interviews', lazy='dynamic'))  # Άλλαξα το backref name
+
     slots = db.relationship('InterviewSlot', backref='interview', lazy='dynamic', cascade="all, delete-orphan",
-                            order_by="InterviewSlot.start_time")  # Ταξινόμηση των slots
+                            order_by="InterviewSlot.start_time")
 
-    # --- ΤΕΛΟΣ ΝΕΟΥ RELATIONSHIP ---
+    company = db.relationship('Company',
+                              backref=db.backref('company_interviews', lazy='dynamic'))  # Relationship με Company
 
-    # --- Σχέση με Company (για ευκολότερη αναζήτηση συνεντεύξεων ανά εταιρεία) ---
-    # Το company_id υπάρχει ήδη, οπότε το backref είναι στο Company model
-    # company = db.relationship('Company', backref=db.backref('interviews_direct', lazy='dynamic'))
-    # Δεν χρειάζεται relationship εδώ αν έχουμε το company_id στο Interview model.
-
-    def generate_confirmation_token(self, days_valid=7):
-        self.confirmation_token = str(uuid.uuid4())
-        self.token_expiration = datetime.now(dt_timezone.utc) + timedelta(days=days_valid)
-
-    def is_token_valid(self):
-        if self.status == InterviewStatus.EXPIRED: return False
-        if self.confirmation_token and self.token_expiration:
-            return datetime.now(dt_timezone.utc) < self.token_expiration
+    def is_token_valid(self, token_type='confirmation'):  # token_type can be 'confirmation' or 'cancellation'
+        now = datetime.now(dt_timezone.utc)
+        if token_type == 'confirmation':
+            return self.confirmation_token is not None and \
+                self.token_expiration is not None and \
+                self.token_expiration > now
+        elif token_type == 'cancellation':
+            return self.cancellation_token is not None and \
+                self.cancellation_token_expiration is not None and \
+                self.cancellation_token_expiration > now
         return False
 
     def __repr__(self):
         return f'<Interview {self.id} for Candidate {self.candidate_id} - Status: {self.status.name if self.status else "N/A"}>'
 
     def to_dict(self, include_slots=False, include_sensitive=False, include_candidate_info=True,
-                include_recruiter_info=True, include_position_info=True):
+                include_recruiter_info=True, include_position_info=True, include_company_info=True):
         data = {
             'id': self.id,
             'candidate_id': str(self.candidate_id) if self.candidate_id else None,
-            'company_id': self.company_id,  # Προσθήκη company_id
+            'company_id': self.company_id,
             'position_id': self.position_id,
             'recruiter_id': self.recruiter_id,
             'scheduled_start_time': self.scheduled_start_time.isoformat() if self.scheduled_start_time else None,
@@ -374,26 +424,37 @@ class Interview(db.Model):
             'notes_for_candidate': self.notes_for_candidate,
             'status': self.status.value if self.status else None,
             'cancellation_reason_candidate': self.cancellation_reason_candidate,
-            'confirmation_token_active': self.is_token_valid(),
+            'confirmation_token_active': self.is_token_valid(token_type='confirmation'),  # Check confirmation token
+            'cancellation_token_active': self.is_token_valid(token_type='cancellation'),  # Check cancellation token
             'token_expires_at': self.token_expiration.isoformat() if self.token_expiration else None,
+            # Για το confirmation token
+            'cancellation_token_expires_at': self.cancellation_token_expiration.isoformat() if self.cancellation_token_expiration else None,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'evaluation_rating_interview': self.evaluation_rating_interview
         }
         if include_candidate_info and self.candidate:
-            data['candidate_name'] = self.candidate.full_name
-            data['candidate_email'] = self.candidate.email  # Προσθήκη email υποψηφίου
+            # Καλεί το Candidate.to_dict() χωρίς include_interviews για να αποφύγει το loop
+            data['candidate'] = self.candidate.to_dict(include_interviews=False, include_history=False,
+                                                       include_cv_url=True)
+
         if include_recruiter_info and self.recruiter:
-            data['recruiter_name'] = self.recruiter.username
+            data['recruiter'] = self.recruiter.to_dict()  # Υποθέτοντας ότι το User.to_dict() είναι απλό
+
         if include_position_info and self.position:
-            data['position_name'] = self.position.position_name
+            data['position'] = self.position.to_dict()
+
+        if include_company_info and self.company:  # Για να έχουμε και το όνομα της εταιρείας
+            data['company_name'] = self.company.name
 
         if include_slots:
-            data['slots'] = [slot.to_dict() for slot in self.slots.all()]  # .all() αν είναι lazy='dynamic'
+            data['slots'] = [slot.to_dict() for slot in self.slots.all()]
 
-        if include_sensitive:
+        if include_sensitive:  # Πληροφορίες που δεν θέλουμε να στέλνονται πάντα
             data['internal_notes'] = self.internal_notes
             data['evaluation_notes'] = self.evaluation_notes
+            # data['confirmation_token'] = self.confirmation_token # Προσοχή με την αποστολή tokens
+            # data['cancellation_token'] = self.cancellation_token # Προσοχή
         return data
 
 
