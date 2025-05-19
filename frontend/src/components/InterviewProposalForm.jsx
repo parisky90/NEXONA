@@ -16,10 +16,13 @@ function InterviewProposalForm({ candidateId, companyPositions = [], onSubmit, o
   const [availablePositions, setAvailablePositions] = useState([]);
 
   useEffect(() => {
-    if (companyPositions.length > 0) {
+    // Το console.warn που είχες εδώ είναι χρήσιμο για να δεις αν έρχονται οι θέσεις
+    if (companyPositions && companyPositions.length > 0) {
         setAvailablePositions(companyPositions);
+        console.log("InterviewProposalForm: companyPositions received:", companyPositions);
     } else {
-        console.warn("InterviewProposalForm: No company positions provided or fetched.");
+        console.warn("InterviewProposalForm: No company positions provided or companyPositions array is empty.");
+        setAvailablePositions([]); // Βεβαιώσου ότι είναι πάντα array
     }
   }, [companyPositions]);
 
@@ -57,20 +60,38 @@ function InterviewProposalForm({ candidateId, companyPositions = [], onSubmit, o
       alert('Please fill in start and end times for all proposed slots.');
       return;
     }
-    // Πρόσθεσε έλεγχο για το format των start_time/end_time αν χρειάζεται
-    // π.χ. να είναι "YYYY-MM-DD HH:MM:SS"
-    const formattedSlots = formData.proposed_slots.map(slot => {
-        // Αυτή η λογική υποθέτει ότι τα inputs για date και time ενημερώνουν σωστά το slot.start_time/end_time
-        // σε format "YYYY-MM-DD HH:MM:SS"
-        if (!slot.start_time.includes(':')) slot.start_time += ' 00:00:00'; // Πρόσθεσε default ώρα αν λείπει
-        if (!slot.end_time.includes(':')) slot.end_time += ' 00:00:00';     // Πρόσθεσε default ώρα αν λείπει
-        return slot;
+    
+    const formattedSlots = formData.proposed_slots.map((slot, index) => {
+        console.log(`InterviewProposalForm: Slot ${index + 1} before formatting for backend:`, JSON.parse(JSON.stringify(slot))); // Deep copy for logging
+
+        let finalStartTime = slot.start_time;
+        let finalEndTime = slot.end_time;
+
+        // Το frontend στέλνει YYYY-MM-DDTHH:mm. Το backend περιμένει YYYY-MM-DD HH:MM:SS
+        // Πρέπει να μετατρέψουμε το "T" σε κενό και να προσθέσουμε ":00" για τα δευτερόλεπτα αν λείπουν.
+        if (finalStartTime && typeof finalStartTime === 'string') {
+            finalStartTime = finalStartTime.replace('T', ' ');
+            if (finalStartTime.length === 16) { // YYYY-MM-DD HH:MM
+                finalStartTime += ':00';
+            }
+        }
+        if (finalEndTime && typeof finalEndTime === 'string') {
+            finalEndTime = finalEndTime.replace('T', ' ');
+            if (finalEndTime.length === 16) { // YYYY-MM-DD HH:MM
+                finalEndTime += ':00';
+            }
+        }
+        
+        console.log(`InterviewProposalForm: Slot ${index + 1} AFTER formatting for backend:`, { start_time: finalStartTime, end_time: finalEndTime });
+        return { start_time: finalStartTime, end_time: finalEndTime };
     });
 
-    onSubmit({ ...formData, proposed_slots: formattedSlots });
+    const payloadToSend = { ...formData, proposed_slots: formattedSlots };
+    console.log("InterviewProposalForm: Submitting payload:", JSON.parse(JSON.stringify(payloadToSend))); // Deep copy for logging
+    onSubmit(payloadToSend);
   };
 
-  const today = new Date().toISOString().split('T')[0];
+  const today = new Date().toISOString().split('T')[0]; // Για το min attribute του date input
 
   return (
     <div className="interview-proposal-form card-style" style={{marginTop: '20px', border: '1px solid var(--primary-color)'}}>
@@ -86,9 +107,10 @@ function InterviewProposalForm({ candidateId, companyPositions = [], onSubmit, o
             className="input-light-gray"
           >
             <option value="">Select a position...</option>
+            {/* Βεβαιώσου ότι το companyPositions έχει αντικείμενα με id και name/position_name */}
             {availablePositions.map(pos => (
               <option key={pos.position_id || pos.id} value={pos.position_id || pos.id}>
-                {pos.position_name || pos.name}
+                {pos.position_name || pos.name || `Position ID ${pos.position_id || pos.id}`}
               </option>
             ))}
           </select>
@@ -102,50 +124,27 @@ function InterviewProposalForm({ candidateId, companyPositions = [], onSubmit, o
                     <button type="button" onClick={() => removeSlot(index)} className="button-action button-reject" style={{fontSize:'0.7rem', padding:'2px 5px'}}>Remove</button>
                 )}
             </div>
+            {/* Χρησιμοποιούμε datetime-local για ευκολότερη επιλογή ημερομηνίας και ώρας */}
             <div className="form-group">
-              <label htmlFor={`slot_date_${index}`}>Date:</label>
+              <label htmlFor={`slot_datetime_start_${index}`}>Start Date & Time:</label>
               <input
-                type="date"
-                id={`slot_date_${index}`}
-                min={today}
-                // Διαχείριση του value για να μην είναι "undefined 00:00:00"
-                value={slot.start_time ? slot.start_time.split(' ')[0] : ''}
-                onChange={(e) => {
-                    const currentTime = slot.start_time.split(' ')[1] || '00:00:00';
-                    handleSlotChange(index, 'start_time', `${e.target.value} ${currentTime}`);
-                    // Αν θέλεις να ενημερώνεις και το end_time date ταυτόχρονα (προαιρετικό)
-                    // const currentEndTime = slot.end_time.split(' ')[1] || '00:00:00';
-                    // handleSlotChange(index, 'end_time', `${e.target.value} ${currentEndTime}`);
-                }}
+                type="datetime-local"
+                id={`slot_datetime_start_${index}`}
+                min={`${today}T00:00`} // Ελάχιστη τιμή
+                value={slot.start_time ? slot.start_time.substring(0,16) : ''} // Format YYYY-MM-DDTHH:mm
+                onChange={(e) => handleSlotChange(index, 'start_time', e.target.value)}
                 required
                 className="input-light-gray"
               />
             </div>
             <div className="form-group">
-              <label htmlFor={`slot_time_start_${index}`}>Start Time:</label>
+              <label htmlFor={`slot_datetime_end_${index}`}>End Date & Time:</label>
               <input
-                type="time"
-                id={`slot_time_start_${index}`}
-                value={slot.start_time ? (slot.start_time.split(' ')[1]?.substring(0,5) || '') : ''}
-                onChange={(e) => {
-                    const currentDate = slot.start_time.split(' ')[0] || today;
-                    handleSlotChange(index, 'start_time', `${currentDate} ${e.target.value}:00`);
-                }}
-                required
-                className="input-light-gray"
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor={`slot_time_end_${index}`}>End Time:</label>
-              <input
-                type="time"
-                id={`slot_time_end_${index}`}
-                value={slot.end_time ? (slot.end_time.split(' ')[1]?.substring(0,5) || '') : ''}
-                onChange={(e) => {
-                    // Χρησιμοποίησε την ημερομηνία από το start_time για συνέπεια, ή την ημερομηνία του end_time αν υπάρχει
-                    const currentDate = slot.start_time.split(' ')[0] || slot.end_time.split(' ')[0] || today;
-                    handleSlotChange(index, 'end_time', `${currentDate} ${e.target.value}:00`);
-                }}
+                type="datetime-local"
+                id={`slot_datetime_end_${index}`}
+                min={slot.start_time ? slot.start_time.substring(0,16) : `${today}T00:00`} // End time >= Start time
+                value={slot.end_time ? slot.end_time.substring(0,16) : ''} // Format YYYY-MM-DDTHH:mm
+                onChange={(e) => handleSlotChange(index, 'end_time', e.target.value)}
                 required
                 className="input-light-gray"
               />
@@ -170,6 +169,7 @@ function InterviewProposalForm({ candidateId, companyPositions = [], onSubmit, o
             <option value="PHONE_SCREEN">Phone Screen</option>
             <option value="VIDEO_CALL">Video Call</option>
             <option value="TECHNICAL_ASSESSMENT">Technical Assessment</option>
+            {/* Μπορείς να προσθέσεις κι άλλους τύπους αν χρειάζεται */}
           </select>
         </div>
         <div className="form-group">
@@ -194,4 +194,4 @@ function InterviewProposalForm({ candidateId, companyPositions = [], onSubmit, o
   );
 }
 
-export default InterviewProposalForm; // <-- Η ΓΡΑΜΜΗ ΠΟΥ ΕΛΕΙΠΕ
+export default InterviewProposalForm;

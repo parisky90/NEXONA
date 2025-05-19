@@ -12,7 +12,7 @@ import {
   BuildingOffice2Icon,
   ShieldCheckIcon,
   ClockIcon,
-  UserPlusIcon,
+  UserPlusIcon,       // Θα το χρησιμοποιήσουμε για το Interview Scheduled
   CheckBadgeIcon,
   FunnelIcon,
   AcademicCapIcon,
@@ -21,7 +21,8 @@ import {
   NoSymbolIcon,
   ArrowPathIcon,
   ExclamationTriangleIcon,
-  CalendarDaysIcon // <-- ΝΕΟ ICON
+  CalendarDaysIcon,         // Για το Company Interviews
+  ChatBubbleLeftRightIcon // Για το Interview Proposed
 } from '@heroicons/react/24/outline';
 
 import { CheckCircleIcon as CheckCircleSolidIcon } from '@heroicons/react/24/solid';
@@ -32,29 +33,27 @@ function Sidebar() {
 
   const handleLogout = async () => {
     await logout();
-    navigate('/login', { replace: true }); // Ανακατεύθυνση μετά το logout
+    navigate('/login', { replace: true });
   };
 
   if (!currentUser) {
-    // Αν δεν υπάρχει currentUser, μην κάνεις render το sidebar
-    // (το ProtectedRoute θα έπρεπε να έχει ήδη ανακατευθύνει στο login)
     return null;
   }
 
   const iconClassName = "sidebar-icon";
 
-  // Helper function για δημιουργία NavLink
+  // Η renderNavLink σου δεν είχε το <li>, το προσθέτω για σωστή δομή λίστας
   const renderNavLink = (to, IconComponent, text, additionalCondition = true, isHired = false) => {
-    if (!additionalCondition) {
-      return null;
+    if (!additionalCondition) { // Προσθήκη ελέγχου για το additionalCondition
+        return null;
     }
     return (
-      <li> {/* Κάθε NavLink τώρα είναι μέσα σε <li> για σωστή σημασιολογία λίστας */}
-        <NavLink 
-          to={to} 
+      <li> {/* Κάθε NavLink μέσα σε <li> */}
+        <NavLink
+          to={to}
           className={({ isActive }) => isActive ? "sidebar-link active-link" : "sidebar-link"}
         >
-          <IconComponent className={`${iconClassName} ${isHired ? 'icon-hired' : ''}`} /> 
+          <IconComponent className={`${iconClassName} ${isHired ? 'icon-hired' : ''}`} />
           <span className="sidebar-link-text">{text}</span>
         </NavLink>
       </li>
@@ -64,17 +63,23 @@ function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebar-user-info">
+        {/* Διόρθωση: εμφάνιση του role με αντικατάσταση του '_' */}
         <p className="user-role-display">{currentUser.role.replace('_', ' ')}</p>
         {currentUser.company_name && <p className="company-name-display">{currentUser.company_name}</p>}
       </div>
-      <ul className="sidebar-nav"> {/* Χρήση <ul> για τη λίστα πλοήγησης */}
+      {/* ΑΛΛΑΓΗ: Χρήση <ul> αντί για <nav> απευθείας για τα links */}
+      <ul className="sidebar-nav">
         {renderNavLink("/dashboard", ChartBarSquareIcon, "Dashboard")}
 
         <div className="sidebar-section-title">Candidates</div>
         {renderNavLink("/candidates/NeedsReview", ClockIcon, "Needs Review")}
         {renderNavLink("/candidates/Accepted", CheckBadgeIcon, "Accepted")}
         {renderNavLink("/candidates/Interested", FunnelIcon, "Interested")}
-        {renderNavLink("/candidates/Interview", UserPlusIcon, "Interview")} {/* Αυτό μπορεί να γίνει Interview Scheduled */}
+        {/* ΝΕΑ LINKS ΓΙΑ ΣΥΝΕΝΤΕΥΞΕΙΣ */}
+        {renderNavLink("/candidates/InterviewProposed", ChatBubbleLeftRightIcon, "Interview Proposed")}
+        {renderNavLink("/candidates/InterviewScheduled", UserPlusIcon, "Interview Scheduled")}
+        {/* ΑΦΑΙΡΕΣΗ ΤΟΥ ΠΑΛΙΟΥ "Interview" LINK ΑΝ ΥΠΗΡΧΕ */}
+        {/* {renderNavLink("/candidates/Interview", UserPlusIcon, "Interview")} */}
         {renderNavLink("/candidates/Evaluation", AcademicCapIcon, "Evaluation")}
         {renderNavLink("/candidates/OfferMade", GiftIcon, "Offer Made")}
         {renderNavLink("/candidates/Hired", CheckCircleSolidIcon, "Hired", true, true)} {/* isHired=true */}
@@ -83,30 +88,31 @@ function Sidebar() {
         {renderNavLink("/candidates/Processing", ArrowPathIcon, "Processing")}
         {renderNavLink("/candidates/ParsingFailed", ExclamationTriangleIcon, "Parsing Failed")}
 
-        {/* Company Management Section - Εμφανίζεται για company_admin και superadmin */}
+        {/* Company Management Section - Το additionalCondition ήταν ήδη εδώ */}
         {(currentUser.role === 'company_admin' || currentUser.role === 'superadmin') && (
           <>
             <div className="sidebar-section-title">Company Management</div>
             {renderNavLink("/company/users", UsersIcon, "Manage Users")}
-            {renderNavLink("/company/interviews", CalendarDaysIcon, "Company Interviews")} {/* <-- ΝΕΟ LINK */}
+            {/* ΠΡΟΣΘΗΚΗ LINK ΓΙΑ COMPANY INTERVIEWS */}
+            {renderNavLink("/company/interviews", CalendarDaysIcon, "Company Interviews")}
           </>
         )}
 
-        {/* Super Admin Section - Εμφανίζεται μόνο για superadmin */}
-        {renderNavLink("/admin/companies", BuildingOffice2Icon, "Manage Companies", currentUser.role === 'superadmin')}
-        {renderNavLink("/admin/users", ShieldCheckIcon, "Manage All Users", currentUser.role === 'superadmin')}
-        {/* Μπορείς να βάλεις τα παραπάνω δύο links κάτω από ένα <div className="sidebar-section-title">Super Admin</div> αν θέλεις */}
-        {currentUser.role === 'superadmin' && !renderNavLink("/admin/companies", BuildingOffice2Icon, "Manage Companies", false) && ( // Hacky τρόπος για να μπει τίτλος μόνο αν υπάρχουν τα links
-             <div className="sidebar-section-title" style={!renderNavLink("/admin/companies", BuildingOffice2Icon, "", currentUser.role === 'superadmin') ? {display: 'none'} : {}}>Super Admin</div>
+        {/* Super Admin Section - Το additionalCondition ήταν ήδη εδώ */}
+        {currentUser.role === 'superadmin' && (
+          <>
+            <div className="sidebar-section-title">Super Admin</div>
+            {renderNavLink("/admin/companies", BuildingOffice2Icon, "Manage Companies")}
+            {renderNavLink("/admin/users", ShieldCheckIcon, "Manage All Users")}
+          </>
         )}
-
 
         <div className="sidebar-section-title">Account</div>
         {renderNavLink("/settings", Cog6ToothIcon, "Settings")}
-        
+
         <li> {/* Το κουμπί logout επίσης μέσα σε <li> */}
           <button onClick={handleLogout} className="sidebar-link logout-button">
-            <ArrowLeftOnRectangleIcon className={iconClassName} /> 
+            <ArrowLeftOnRectangleIcon className={iconClassName} />
             <span className="sidebar-link-text">Logout</span>
           </button>
         </li>

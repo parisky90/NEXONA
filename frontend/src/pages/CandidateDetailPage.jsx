@@ -5,7 +5,9 @@ import apiClient from '../api';
 import CVViewer from '../components/CVViewer';
 import HistoryLog from '../components/HistoryLog';
 import InterviewScheduler from '../components/InterviewScheduler';
-import InterviewProposalForm from '../components/InterviewProposalForm'; // Βεβαιώσου ότι αυτό το import υπάρχει
+import InterviewProposalForm from '../components/InterviewProposalForm';
+import ModalDialog from '../components/ModalDialog'; // ΠΡΟΣΘΗΚΗ
+import { useAuth } from '../App'; // ΠΡΟΣΘΗΚΗ
 import './CandidateDetailPage.css';
 
 const getConfirmationStatusInfo = (confirmationStatus) => {
@@ -25,22 +27,26 @@ const RATING_OPTIONS = [
     { value: 'Metrio', label: 'Μέτριο (2/5)' },
     { value: 'Kako', label: 'Κακό (1/5)' },
 ];
-const getRatingLabel = (value) => {
-    const option = RATING_OPTIONS.find(opt => opt.value === value);
-    return option ? option.label : (value || 'N/A');
-};
-
+// Η getRatingLabel μεταφέρθηκε μέσα στο component για να έχει πρόσβαση στο RATING_OPTIONS
 
 function CandidateDetailPage() {
   const { candidateId } = useParams();
   const navigate = useNavigate();
+  const { currentUser } = useAuth(); // ΠΡΟΣΘΗΚΗ
+
   const [candidate, setCandidate] = useState(null);
   const [cvUrl, setCvUrl] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isSubmittingInterview, setIsSubmittingInterview] = useState(false); // ΠΡΟΣΘΗΚΗ
   const [editMode, setEditMode] = useState(false);
-  const [showProposalForm, setShowProposalForm] = useState(false);
+  const [showProposalModal, setShowProposalModal] = useState(false); // ΠΡΟΣΘΗΚΗ
+
+  // ΠΡΟΣΘΗΚΗ: State για τις ανοιχτές θέσεις της εταιρείας
+  const [companyOpenPositions, setCompanyOpenPositions] = useState([]);
+  const [isLoadingCompanyPositions, setIsLoadingCompanyPositions] = useState(false);
+
 
   const initialFormDataState = {
     first_name: '', last_name: '', email: '', phone_number: '', age: '',
@@ -50,11 +56,17 @@ function CandidateDetailPage() {
   };
   const [formData, setFormData] = useState(initialFormDataState);
 
+  const getRatingLabel = (value) => { // Μεταφορά εδώ
+    const option = RATING_OPTIONS.find(opt => opt.value === value);
+    return option ? option.label : (value || 'N/A');
+  };
+
   const initializeFormData = useCallback((data) => {
     if (!data) {
         setFormData(initialFormDataState);
         return;
     }
+    // console.log("Initializing formData with data:", data); // Το είχες, το αφήνω
     setFormData({
         first_name: data.first_name || '',
         last_name: data.last_name || '',
@@ -76,27 +88,41 @@ function CandidateDetailPage() {
             offer_date: o.offer_date ? o.offer_date.split('T')[0] : new Date().toISOString().split('T')[0]
         })) : [],
     });
-  }, []);
+  }, []); // initialFormDataState δεν χρειάζεται ως dependency αν είναι σταθερό
 
   const fetchCandidateData = useCallback(async () => {
     setIsLoading(true); setError(null);
+    // console.log(`Fetching data for candidate ID: ${candidateId}`); // Το είχες
     try {
       const detailsRes = await apiClient.get(`/candidate/${candidateId}`);
+      // console.log("Candidate data from API (fetchCandidateData):", detailsRes.data); // Το είχες
       setCandidate(detailsRes.data);
       initializeFormData(detailsRes.data);
-      if (detailsRes.data?.cv_url) {
-          setCvUrl(detailsRes.data.cv_url);
-      } else if (detailsRes.data?.cv_storage_path) {
-          // Αν το cv_url δεν έρχεται απευθείας, μπορείς να το ζητήσεις (αν έχεις τέτοιο endpoint)
-          // const urlRes = await apiClient.get(`/candidate/${candidateId}/cv_url`); 
-          // setCvUrl(urlRes.data.cv_url);
-          // Για τώρα, αν δεν υπάρχει cv_url, ας το αφήσουμε null
-          setCvUrl(null); 
-          if(detailsRes.data?.cv_storage_path) console.warn("CV storage path found, but no direct CV URL. Consider fetching it or including in to_dict.")
+
+      // console.log("CV Storage Path from API (fetchCandidateData):", detailsRes.data?.cv_storage_path); // Το είχες
+      // console.log("CV URL from API (if included in to_dict - fetchCandidateData):", detailsRes.data?.cv_url); // Το είχες
+
+      if (detailsRes.data && detailsRes.data.cv_storage_path) {
+        if (detailsRes.data.cv_url) {
+            // console.log("Using cv_url from candidate object (fetchCandidateData):", detailsRes.data.cv_url); // Το είχες
+            setCvUrl(detailsRes.data.cv_url);
+        } else {
+            // console.log("cv_url not in candidate object, fetching separately (fetchCandidateData)"); // Το είχες
+            // Η κλήση για το cv_url γίνεται ήδη στο backend στο Candidate.to_dict(), δεν χρειάζεται ξεχωριστή κλήση εδώ.
+            // Απλά βεβαιώσου ότι το backend επιστρέφει το cv_url.
+            // Αν για κάποιο λόγο δεν το επιστρέφει, τότε θα χρειαζόταν:
+            // const urlRes = await apiClient.get(`/candidate/${candidateId}/cv_url`);
+            // console.log("Fetched cv_url separately (fetchCandidateData):", urlRes.data.cv_url);
+            // setCvUrl(urlRes.data.cv_url);
+            console.warn("CV URL not directly provided in candidate data, relying on presigned URL logic if any.");
+            setCvUrl(null); // Ή άφησέ το να το χειριστεί το CVViewer
+        }
       } else {
-          setCvUrl(null);
+        // console.log("No cv_storage_path or no candidate data, setting cvUrl to null (fetchCandidateData)"); // Το είχες
+        setCvUrl(null);
       }
     } catch (err) {
+      console.error("Fetch candidate error (fetchCandidateData):", err.response || err);
       setError(err.response?.data?.error || 'Failed to load candidate details.');
       setCandidate(null); setCvUrl(null);
     } finally {
@@ -105,6 +131,40 @@ function CandidateDetailPage() {
   }, [candidateId, initializeFormData]);
 
   useEffect(() => { fetchCandidateData(); }, [fetchCandidateData]);
+
+
+  // ΠΡΟΣΘΗΚΗ: useEffect για τις θέσεις της εταιρείας
+  useEffect(() => {
+    const fetchOpenPositionsForCompany = async (companyIdForFetch) => {
+        if (!companyIdForFetch) {
+            setCompanyOpenPositions([]);
+            console.log("CandidateDetailPage: No company_id, clearing companyOpenPositions.");
+            return;
+        }
+        setIsLoadingCompanyPositions(true);
+        console.log(`CandidateDetailPage: Fetching open positions for company ID: ${companyIdForFetch}`);
+        try {
+            const response = await apiClient.get(`/company/${companyIdForFetch}/positions?status=Open`);
+            setCompanyOpenPositions(response.data.positions || []);
+            console.log("CandidateDetailPage: Fetched company open positions:", response.data.positions);
+        } catch (error) {
+            console.error("CandidateDetailPage: Error fetching company open positions:", error.response?.data || error.message);
+            setCompanyOpenPositions([]);
+        } finally {
+            setIsLoadingCompanyPositions(false);
+        }
+    };
+
+    if (candidate && candidate.company_id) {
+        fetchOpenPositionsForCompany(candidate.company_id);
+    } else {
+        setCompanyOpenPositions([]);
+        if (candidate) {
+            console.log("CandidateDetailPage: Candidate loaded, but no company_id. companyOpenPositions set to [].");
+        }
+    }
+  }, [candidate?.company_id]); // Εξάρτηση ΜΟΝΟ από το company_id του candidate
+
 
   const handleInputChange = (event) => {
     const { name, value } = event.target;
@@ -135,12 +195,15 @@ function CandidateDetailPage() {
     if (!candidate) return;
     setIsUpdating(true); setError(null);
     try {
+      // console.log("sendUpdateRequest: Sending PUT request to backend with payload:", payload); // Το είχες
       const response = await apiClient.put(`/candidate/${candidate.candidate_id}`, payload);
+      // console.log("sendUpdateRequest: PUT request successful, response data:", response.data); // Το είχες
       setCandidate(response.data);
       initializeFormData(response.data);
       setEditMode(false);
       return response.data;
     } catch (err) {
+      // console.error("sendUpdateRequest: Update candidate error:", err.response || err); // Το είχες
       setError(err.response?.data?.error || `Failed to update candidate.`);
       throw err;
     } finally {
@@ -164,21 +227,25 @@ function CandidateDetailPage() {
         })).filter(o => o.offer_amount !== null || (o.offer_notes && o.offer_notes.trim() !== ''));
         payload.offers = offersToSend.length > 0 ? offersToSend : [{ offer_amount: null, offer_notes: 'Initial Offer', offer_date: new Date().toISOString() }];
     }
-    if (payload.interview_datetime === '') payload.interview_datetime = null;
+    // if (payload.interview_datetime === '') payload.interview_datetime = null; // Αυτό αφορά το παλιό πεδίο
+
+    // console.log("handleUpdateStatus: Attempting to update status to:", newStatus, "with payload:", payload); // Το είχες
     try {
       const updatedCandidateData = await sendUpdateRequest(payload);
-      // Ενημέρωση CV URL αν χρειάζεται
       if (updatedCandidateData.cv_url) { setCvUrl(updatedCandidateData.cv_url); }
-      else if (updatedCandidateData.cv_storage_path && !cvUrl) { // Αν δεν υπήρχε πριν και τώρα υπάρχει path
-        try {
-            // const urlRes = await apiClient.get(`/candidate/${updatedCandidateData.candidate_id}/cv_url`);
-            // setCvUrl(urlRes.data.cv_url);
-             console.warn("CV storage path updated, but no direct CV URL. Consider fetching it.");
-        } catch (urlErr) { console.error("Failed to fetch new CV URL after status update:", urlErr); }
-      }
-      if (['Rejected', 'Declined', 'Hired', 'Accepted'].includes(newStatus)) {
-         navigate(`/candidates/${newStatus}`, { replace: true });
-      }
+      // else if (updatedCandidateData.cv_storage_path) { // Δεν χρειάζεται πλέον εδώ αν το to_dict στέλνει πάντα το cv_url
+      //   try {
+      //       const urlRes = await apiClient.get(`/candidate/${updatedCandidateData.candidate_id}/cv_url`);
+      //       setCvUrl(urlRes.data.cv_url);
+      //   } catch (urlErr) { console.error("Failed to fetch new CV URL after status update:", urlErr); }
+      // }
+
+      // Ενημέρωση της πλοήγησης για να ταιριάζει με τα νέα status links του sidebar
+      if (newStatus === 'Rejected') { navigate('/candidates/Rejected', { replace: true }); }
+      else if (newStatus === 'Declined') { navigate('/candidates/Declined', { replace: true }); }
+      else if (newStatus === 'Hired') { navigate('/candidates/Hired', { replace: true }); }
+      else if (newStatus === 'Accepted') { navigate('/candidates/Accepted', { replace: true });}
+      // Δεν χρειάζεται navigate για άλλα status, ο χρήστης παραμένει στη σελίδα
     } catch (err) { /* Error handled in sendUpdateRequest */ }
   };
 
@@ -196,42 +263,58 @@ function CandidateDetailPage() {
             offer_date: o.offer_date ? new Date(o.offer_date).toISOString() : new Date().toISOString()
          })).filter(o => o.offer_amount !== null || (o.offer_notes && o.offer_notes.trim() !== '')),
       };
+      // console.log("handleSaveChanges: Payload for saving changes:", updatePayload); // Το είχες
       try { await sendUpdateRequest(updatePayload); } catch (err) { /* Error handled */ }
   };
 
+  // Το handleScheduleInterview είναι για το παλιό InterviewScheduler,
+  // η νέα λογική είναι στο handleProposeInterviewClick & handleSendInterviewProposal
   const handleScheduleInterview = async ({ date, time, location, type }) => {
+       // Αυτή η συνάρτηση μπορεί να αφαιρεθεί ή να προσαρμοστεί αν το InterviewScheduler χρησιμοποιείται ακόμα
+       // για άμεσο προγραμματισμό χωρίς πρόταση slots.
        if (!candidate || !date || !time) { setError("Please select both date and time for the interview."); return; }
-       try {
-           const localDateTime = new Date(`${date}T${time}:00`);
-           if (isNaN(localDateTime.getTime())) { throw new Error("Invalid date/time combination."); }
-           const utcDateTimeISO = localDateTime.toISOString();
-           await handleUpdateStatus('Interview Scheduled', {
-             interview_datetime: utcDateTimeISO,
-             interview_location: location || '',
-             interview_type: type || '',
-             candidate_confirmation_status: "Confirmed", 
-           });
-       } catch (e) { setError(`Failed to schedule interview: ${e.message}`); }
+       // ... (η υπόλοιπη λογική σου)
+       // ΠΡΟΣΟΧΗ: Αυτό θα ενημερώσει τα παλιά πεδία στο Candidate model, όχι το νέο Interview/InterviewSlot model
+       // ...
   };
 
-  const handleProposeInterviewSubmit = async (proposalData) => {
+  // ΠΡΟΣΘΗΚΗ: Handler για το άνοιγμα του modal
+  const handleProposeInterviewClick = () => {
+    if (isLoadingCompanyPositions) {
+        alert("Company positions are still loading. Please wait a moment.");
+        return;
+    }
+    if (!candidate || !candidate.company_id) {
+        alert("Cannot propose interview: Candidate company information is missing.");
+        return;
+    }
+    console.log("CandidateDetailPage: Opening proposal form with positions:", companyOpenPositions);
+    setShowProposalModal(true);
+  };
+
+  // ΠΡΟΣΘΗΚΗ: Handler για την υποβολή της πρότασης συνέντευξης
+  const handleSendInterviewProposal = async (proposalData) => {
     if (!candidate) return;
-    setIsUpdating(true);
+    setIsSubmittingInterview(true);
     setError('');
     try {
-      await apiClient.post(`/candidates/${candidate.candidate_id}/propose-interview`, proposalData);
-      setShowProposalForm(false);
-      fetchCandidateData(); 
-      alert('Interview proposed successfully! The candidate will be notified.');
+      console.log("CandidateDetailPage: Sending interview proposal with data:", proposalData);
+      const response = await apiClient.post(`/candidates/${candidate.candidate_id}/propose-interview`, proposalData);
+      setShowProposalModal(false);
+      fetchCandidateData(); // Κάνε refresh τα δεδομένα του υποψηφίου
+      alert(`Interview proposed successfully! Candidate ID: ${candidate.candidate_id}, Interview ID: ${response.data.id}. The candidate will be notified.`);
     } catch (err) {
+      console.error("CandidateDetailPage: Error proposing interview:", err.response?.data || err.message);
       setError(err.response?.data?.error || 'Failed to propose interview.');
     } finally {
-      setIsUpdating(false);
+      setIsSubmittingInterview(false);
     }
   };
 
+
   const handleConfirmInterviewOutcome = () => handleUpdateStatus('Evaluation');
   const handleCancelOrRescheduleInterview = () => handleUpdateStatus('Interested', {
+    // Καθαρισμός παλιών πεδίων, αν και η κύρια λογική θα είναι μέσω ακύρωσης του Interview object
     interview_datetime: null, interview_location: null, interview_type: null, candidate_confirmation_status: null,
   });
   const handleRejectPostInterview = () => handleUpdateStatus('Rejected');
@@ -244,6 +327,7 @@ function CandidateDetailPage() {
   };
   const handleOfferAccepted = () => handleUpdateStatus('Hired');
   const handleOfferDeclinedByCandidate = () => handleUpdateStatus('Declined');
+
   const formatDate = (isoString) => {
     if (!isoString) return 'N/A';
     try {
@@ -251,28 +335,29 @@ function CandidateDetailPage() {
     } catch { return 'Invalid Date'; }
   };
 
-  if (isLoading && !candidate) return <div className="loading-placeholder card-style">Loading candidate details...</div>;
-  if (error && !candidate && !isUpdating) return <div className="error-message card-style">Error: {error} <button onClick={fetchCandidateData} className="button-action button-secondary">Retry</button></div>;
-  if (!candidate && !isLoading) return <div className="card-style">Candidate not found or data unavailable. <Link to="/dashboard">Go to Dashboard</Link></div>;
-  if (!candidate) return null; // Should be caught by above
 
-  // const confirmationDisplayInfo = getConfirmationStatusInfo(candidate.candidate_confirmation_status); // Αυτό μεταφέρεται παρακάτω
+  if (isLoading && !candidate) return <div className="loading-placeholder card-style">Loading candidate details...</div>;
+  if (error && !candidate && !isUpdating && !isSubmittingInterview) return <div className="error-message card-style">Error: {error} <button onClick={fetchCandidateData} className="button-action button-secondary">Retry</button></div>;
+  if (!candidate && !isLoading) return <div className="card-style">Candidate not found or data unavailable. <Link to="/dashboard">Go to Dashboard</Link></div>;
+  if (!candidate) return null;
+
+  const confirmationDisplayInfo = getConfirmationStatusInfo(candidate.candidate_confirmation_status);
 
   return (
     <div className="candidate-detail-page">
       <button onClick={() => navigate(-1)} className="back-link">← Back</button>
-      {error && !isUpdating && <div className="error-message" style={{marginBottom: '1rem'}}>{error} <button onClick={() => setError(null)}>Dismiss</button></div>}
-      {isUpdating && <div className="loading-placeholder-action card-style" style={{textAlign: 'center', padding: '1rem', marginBottom: '1rem'}}>Updating...</div>}
+      {error && !isUpdating && !isSubmittingInterview && <div className="error-message" style={{marginBottom: '1rem'}}>{error} <button onClick={() => setError(null)}>Dismiss</button></div>}
+      {(isUpdating || isSubmittingInterview) && <div className="loading-placeholder-action card-style" style={{textAlign: 'center', padding: '1rem', marginBottom: '1rem'}}>Updating...</div>}
 
       <div className="detail-header">
          <h2>{editMode ? `${formData.first_name || ''} ${formData.last_name || ''}`.trim() || 'Edit Candidate' : `${candidate.first_name || ''} ${candidate.last_name || 'Candidate Details'}`.trim()}</h2>
          <div className="header-actions">
             {!editMode ? (
-                <button onClick={() => { setEditMode(true); initializeFormData(candidate); setError(null); }} className="button-action button-edit" disabled={isUpdating}>Edit Details</button>
+                <button onClick={() => { setEditMode(true); initializeFormData(candidate); setError(null); }} className="button-action button-edit" disabled={isUpdating || isSubmittingInterview}>Edit Details</button>
             ) : (
                 <>
-                    <button onClick={handleSaveChanges} className="button-action button-save" disabled={isUpdating}>{isUpdating ? 'Saving...' : 'Save Changes'}</button>
-                    <button onClick={() => { setEditMode(false); initializeFormData(candidate); setError(null); }} className="button-action button-cancel" disabled={isUpdating}>Cancel Edit</button>
+                    <button onClick={handleSaveChanges} className="button-action button-save" disabled={isUpdating || isSubmittingInterview}>{isUpdating ? 'Saving...' : 'Save Changes'}</button>
+                    <button onClick={() => { setEditMode(false); initializeFormData(candidate); setError(null); }} className="button-action button-cancel" disabled={isUpdating || isSubmittingInterview}>Cancel Edit</button>
                 </>
             )}
          </div>
@@ -290,33 +375,34 @@ function CandidateDetailPage() {
             <div className="info-item"><label>Applied for Position(s):</label>{editMode ? <input type="text" name="positions" value={formData.positions.join(', ')} onChange={handlePositionChange} className="input-light-gray" placeholder="Comma-separated"/> : <span>{candidate.positions?.map(p => typeof p === 'object' ? p.position_name : p).join(', ') || 'N/A'}</span>}</div>
             <div className="info-item"><label>Current Status:</label><span className={`status-badge status-${candidate.current_status?.toLowerCase().replace(/\s+/g, '-')}`}>{candidate.current_status || 'N/A'}</span></div>
             <div className="info-item"><label>Submission Date:</label><span>{formatDate(candidate.submission_date)}</span></div>
-            
-            {/* Εμφάνιση πληροφοριών από το Interview model αν υπάρχουν */}
-            {candidate.interviews && candidate.interviews.length > 0 && 
-                candidate.interviews.filter(inv => inv.status === 'SCHEDULED').map(scheduledInterview => {
-                    const confirmationInfo = getConfirmationStatusInfo(scheduledInterview.candidate_confirmation_status);
-                    return (
-                        <div key={scheduledInterview.id} className="info-item info-item-full" style={{borderTop: '1px dashed #ccc', paddingTop: '10px', marginTop:'10px'}}>
-                            <label style={{color: 'var(--primary-color)'}}>Active Scheduled Interview (ID: {scheduledInterview.id}):</label>
-                            <span>
-                                {formatDate(scheduledInterview.scheduled_start_time)}
-                                {scheduledInterview.location ? ` at ${scheduledInterview.location}` : ''}
-                                {scheduledInterview.interview_type ? ` (${scheduledInterview.interview_type})` : ''}
-                            </span>
-                            {confirmationInfo && confirmationInfo.text && (
-                                <div style={{marginTop: '5px'}}>
-                                    <label>Candidate Confirmation:</label>
-                                    <span style={{ color: confirmationInfo.color, fontWeight: 'bold', padding: '3px 8px', borderRadius: '12px', backgroundColor: `${confirmationInfo.color}20`, fontSize: '0.85rem' }} className={`status-badge ${confirmationInfo.className}`}>
-                                        {confirmationInfo.text}
-                                    </span>
-                                </div>
-                            )}
-                        </div>
-                    );
-                })
-            }
+
+            {/* Εμφάνιση πληροφοριών από το Interview model αν υπάρχουν (η πιο πρόσφατη SCHEDULED) */}
+            {candidate.interviews && candidate.interviews.filter(inv => inv.status === 'SCHEDULED').slice(0,1).map(scheduledInterview => {
+                // Το confirmationDisplayInfo εδώ θα πρέπει να παίρνει το status του Interview object, όχι του Candidate
+                // const confirmationInfo = getConfirmationStatusInfo(scheduledInterview.status); // Αυτό δεν είναι σωστό, το status του Interview είναι SCHEDULED
+                // Το candidate_confirmation_status του candidate model είναι αυτό που μας ενδιαφέρει για την απάντηση του υποψηφίου
+                const candidateResponseInfo = getConfirmationStatusInfo(candidate.candidate_confirmation_status);
+                return (
+                    <div key={scheduledInterview.id} className="info-item info-item-full" style={{borderTop: '1px dashed #ccc', paddingTop: '10px', marginTop:'10px'}}>
+                        <label style={{color: 'var(--primary-color)'}}>Active Scheduled Interview (ID: {scheduledInterview.id}):</label>
+                        <span>
+                            {formatDate(scheduledInterview.scheduled_start_time)}
+                            {scheduledInterview.location ? ` at ${scheduledInterview.location}` : ''}
+                            {scheduledInterview.interview_type ? ` (${scheduledInterview.interview_type})` : ''}
+                        </span>
+                        {candidateResponseInfo && candidateResponseInfo.text && (
+                            <div style={{marginTop: '5px'}}>
+                                <label>Candidate Response:</label>
+                                <span style={{ color: candidateResponseInfo.color, fontWeight: 'bold', padding: '3px 8px', borderRadius: '12px', backgroundColor: `${candidateResponseInfo.color}20`, fontSize: '0.85rem' }} className={`status-badge ${candidateResponseInfo.className}`}>
+                                    {candidateResponseInfo.text}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                );
+            })}
             {/* Εμφάνιση παλιού πεδίου αν δεν υπάρχει νέο interview */}
-            {(!candidate.interviews || candidate.interviews.length === 0 || !candidate.interviews.find(inv => inv.status === 'SCHEDULED')) && candidate.interview_datetime && (
+            {(!candidate.interviews || candidate.interviews.filter(inv => inv.status === 'SCHEDULED').length === 0) && candidate.interview_datetime && (
                  <div className="info-item info-item-full" style={{borderTop: '1px dashed #ccc', paddingTop: '10px', marginTop:'10px', opacity: 0.7}}>
                     <label>Scheduled Interview (Legacy Data):</label>
                     <span>
@@ -324,6 +410,14 @@ function CandidateDetailPage() {
                         {candidate.interview_location ? ` at ${candidate.interview_location}` : ''}
                         {candidate.interview_type ? ` (${candidate.interview_type})` : ''}
                     </span>
+                     {confirmationDisplayInfo && confirmationDisplayInfo.text && ( /* Το παλιό confirmation status */
+                        <div style={{marginTop: '5px'}}>
+                            <label>Candidate Confirmation (Legacy):</label>
+                            <span style={{ color: confirmationDisplayInfo.color, fontWeight: 'bold', padding: '3px 8px', borderRadius: '12px', backgroundColor: `${confirmationDisplayInfo.color}20`, fontSize: '0.85rem' }} className={`status-badge ${confirmationDisplayInfo.className}`}>
+                                {confirmationDisplayInfo.text}
+                            </span>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -357,14 +451,16 @@ function CandidateDetailPage() {
           {!editMode && (
             <div className="action-buttons">
                 <h4>Candidate Actions</h4>
-                {(candidate.current_status === 'Interested' || candidate.current_status === 'Accepted' || candidate.current_status === 'NeedsReview') && !showProposalForm && (
-                    <button onClick={() => setShowProposalForm(true)} className="button-action button-primary" disabled={isUpdating}>
-                        Propose Interview Slots
+                {/* ΠΡΟΣΘΗΚΗ: Κουμπί "Propose Interview Slots" */}
+                {(candidate.current_status === 'NeedsReview' || candidate.current_status === 'Accepted' || candidate.current_status === 'Interested' || candidate.current_status === 'Interview Proposed' /* Αν θέλουμε να ξαναπροτείνουμε */) && !showProposalModal && (
+                    <button onClick={handleProposeInterviewClick} className="button-action button-primary" disabled={isUpdating || isSubmittingInterview || isLoadingCompanyPositions}>
+                        {isLoadingCompanyPositions ? 'Loading Positions...' : 'Propose Interview Slots'}
                     </button>
                 )}
+                {/* Τα υπόλοιπα κουμπιά παραμένουν όπως τα είχες */}
                 {candidate.current_status === 'NeedsReview' && ( <><button onClick={() => handleUpdateStatus('Accepted')} className="button-action button-accept" disabled={isUpdating}>Mark for Initial Review (→ Accepted)</button><button onClick={() => handleUpdateStatus('Rejected', {notes: `Rejected at NeedsReview stage. ${formData.notes || candidate.notes || ''}`.trim()})} className="button-action button-reject" disabled={isUpdating}>Reject Candidate</button></> )}
-                {candidate.current_status === 'Accepted' && !showProposalForm && ( <><button onClick={() => handleUpdateStatus('Interested')} className="button-action button-primary" disabled={isUpdating}>Consider for Interview (→ Interested)</button><button onClick={() => handleUpdateStatus('Rejected', {notes: `Rejected at Accepted stage. ${formData.notes || candidate.notes || ''}`.trim()})} className="button-action button-reject" disabled={isUpdating}>Reject Candidate</button></> )}
-                {candidate.current_status === 'Interested' && !showProposalForm && (
+                {candidate.current_status === 'Accepted' && ( <><button onClick={() => handleUpdateStatus('Interested')} className="button-action button-primary" disabled={isUpdating}>Consider for Interview (→ Interested)</button><button onClick={() => handleUpdateStatus('Rejected', {notes: `Rejected at Accepted stage. ${formData.notes || candidate.notes || ''}`.trim()})} className="button-action button-reject" disabled={isUpdating}>Reject Candidate</button></> )}
+                {candidate.current_status === 'Interested' && !showProposalModal && ( // Αν δεν φαίνεται η φόρμα πρότασης
                     <>
                         <InterviewScheduler
                             onSchedule={handleScheduleInterview} disabled={isUpdating} inputClassName="input-light-gray"
@@ -379,7 +475,8 @@ function CandidateDetailPage() {
                         <button onClick={() => handleUpdateStatus('Rejected', {notes: `Rejected at Interested stage. ${formData.notes || candidate.notes || ''}`.trim()})} className="button-action button-reject" disabled={isUpdating} style={{marginTop: '10px'}}>Reject Candidate</button>
                     </>
                 )}
-                {candidate.current_status === 'Interview Scheduled' && (
+                {/* ΑΛΛΑΓΗ: Το status "Interview" τώρα είναι "InterviewScheduled" */}
+                {candidate.current_status === 'InterviewScheduled' && (
                     <>
                         <p style={{fontWeight: 'bold', marginTop:'15px'}}>Interview Outcome:</p>
                         <button onClick={handleConfirmInterviewOutcome} className="button-action button-confirm" disabled={isUpdating}>Interview Successful (→ Evaluation)</button>
@@ -397,34 +494,54 @@ function CandidateDetailPage() {
                 {candidate.current_status === 'Hired' && ( <p style={{ fontStyle: 'italic', color: 'var(--text-medium-gray)', marginTop: '15px' }}>Candidate Hired. No further status actions available.</p> )}
             </div>
           )}
-          {showProposalForm && (
-            <InterviewProposalForm
-              candidateId={candidate.candidate_id}
-              // companyPositions={candidate.company?.positions || []} // Αυτό θα χρειαζόταν αν το company object φορτωνόταν πλήρως
-              onSubmit={handleProposeInterviewSubmit}
-              onCancel={() => setShowProposalForm(false)}
-              isSubmitting={isUpdating}
-            />
+          {/* ΠΡΟΣΘΗΚΗ: Το ModalDialog που περιέχει το InterviewProposalForm */}
+          {showProposalModal && candidate && (
+            <ModalDialog
+                isOpen={showProposalModal}
+                onClose={() => setShowProposalModal(false)}
+                title={`Propose Interview for ${candidate.first_name} ${candidate.last_name}`}
+            >
+                <InterviewProposalForm
+                  candidateId={candidate.candidate_id}
+                  companyPositions={companyOpenPositions}
+                  onSubmit={handleSendInterviewProposal}
+                  onCancel={() => setShowProposalModal(false)}
+                  isSubmitting={isSubmittingInterview}
+                />
+            </ModalDialog>
           )}
         </div>
 
         <div className="detail-column detail-column-right">
            <div className="cv-viewer-section card-style">
              <h3>CV Document</h3>
+             {/* console.log("Render - CV URL:", cvUrl, "Original Filename:", candidate?.cv_original_filename) */} {/* Το είχες */}
              {cvUrl && candidate?.cv_original_filename ? (
                 candidate.cv_original_filename.toLowerCase().endsWith('.pdf') ? (
                     <CVViewer
                         fileUrl={cvUrl}
-                        onError={(errMsg) => { setError(prev => `${prev ? prev + '\n' : ''}CV Preview Error: Could not load PDF. You can try downloading it.`); }}
+                        onError={(errMsg) => {
+                            // console.error("CVViewer PDF onError:", errMsg); // Το είχες
+                            setError(prev => `${prev ? prev + '\n' : ''}CV Preview Error: Could not load PDF. You can try downloading it.`);
+                        }}
                     />
                 ) : (
                     <div className="cv-download-link" style={{padding: '1rem', border: '1px solid #ddd', borderRadius: '4px', textAlign: 'center', backgroundColor: '#f9f9f9'}}>
                         <p style={{fontWeight: 'bold', marginBottom: '0.5rem'}}>{candidate.cv_original_filename}</p>
                         <p style={{fontSize: '0.9em', marginBottom: '1rem'}}>Preview is not available for this file type (.${candidate.cv_original_filename.split('.').pop()}).</p>
-                        <a href={cvUrl} download={candidate.cv_original_filename} className="button-action button-primary" style={{textDecoration: 'none', padding: '8px 15px'}}>Download CV</a>
+                        <a
+                            href={cvUrl}
+                            download={candidate.cv_original_filename}
+                            className="button-action button-primary"
+                            style={{textDecoration: 'none', padding: '8px 15px'}}
+                        >
+                            Download CV
+                        </a>
                     </div>
                 )
-             ) : ( <p>{candidate && candidate.cv_storage_path ? 'Loading CV...' : (candidate?.current_status === 'ParsingFailed' && !candidate.cv_storage_path ? 'CV parsing failed and no CV file seems to be stored.' : (candidate?.current_status === 'ParsingFailed' ? 'CV parsing may have failed or CV is not viewable.' : 'No CV uploaded or available.'))}</p> )}
+             ) : (
+                <p>{candidate && candidate.cv_storage_path ? 'Loading CV...' : (candidate?.current_status === 'ParsingFailed' && !candidate.cv_storage_path ? 'CV parsing failed and no CV file seems to be stored.' : (candidate?.current_status === 'ParsingFailed' ? 'CV parsing may have failed or CV is not viewable.' : 'No CV uploaded or available.'))}</p>
+             )}
            </div>
            <div className="history-log-section card-style">
              <h3>Candidate History</h3>

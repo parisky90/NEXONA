@@ -1,5 +1,4 @@
 # backend/docker-compose.yml
-version: '3.8' # Added version for better practice
 
 services:
   redis:

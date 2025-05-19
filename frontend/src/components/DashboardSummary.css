@@ -1,62 +1,70 @@
 /* frontend/src/components/DashboardSummary.css */
 .dashboard-summary-container {
   width: 100%;
-  height: 100%; /* Για να πιάνει το ύψος του wrapper */
-  display: flex; /* Για να μπορεί το grid να επεκταθεί */
-  flex-direction: column;
+  /* Το height: 100% μπορεί να μην είναι απαραίτητο εδώ αν το grid καθορίζει το ύψος */
 }
 
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); /* Λίγο πιο φαρδιά κουτάκια */
-  gap: 1rem; 
+  /* Θέλουμε τα κουτιά να έχουν ένα σχετικά σταθερό πλάτος και να τυλίγονται.
+     Το auto-fill θα δημιουργήσει όσες στήλες χωράνε με αυτό το πλάτος. */
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); /* Κάθε κουτί πλάτος τουλάχιστον 100px, μεγαλώνει για να γεμίσει */
+  gap: 0.75rem; /* Κενό μεταξύ των κουτιών */
+  /* justify-content: flex-start; */ /* Στοίχιση των κουτιών στην αρχή της γραμμής */
+  /* align-content: flex-start; */  /* Στοίχιση των γραμμών (αν υπάρχουν πολλές) στην αρχή του container */
   width: 100%;
-  flex-grow: 1; /* Για να γεμίσει τον διαθέσιμο χώρο */
 }
 
 .summary-item {
-  background-color: #ffffff; 
-  padding: 1.25rem; /* 20px, για περισσότερο "αέρα" */
-  border-radius: 10px; 
+  background-color: #ffffff;
+  padding: 0.75rem;
+  border-radius: 6px;
   text-align: center;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: center; /* Κεντράρισμα περιεχομένου κάθετα */
   align-items: center;
-  min-height: 110px; 
-  box-shadow: 0 3px 6px rgba(0,0,0,0.05), 0 2px 4px rgba(0,0,0,0.04); /* Ελαφρώς πιο έντονη σκιά */
-  border: 1px solid #f3f4f6; /* Πολύ διακριτικό border */
-  transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
+  /* Για τετράγωνη αίσθηση, το ύψος πρέπει να είναι κοντά στο πλάτος.
+     Μπορείς να ορίσεις ένα σταθερό ύψος ή να χρησιμοποιήσεις aspect-ratio αν υποστηρίζεται
+     ή να το αφήσεις να καθοριστεί από το περιεχόμενο και το padding. */
+  height: 90px; /* Δοκίμασε ένα σταθερό ύψος */
+  /* aspect-ratio: 1 / 1; */ /* Αυτό θα τα έκανε τέλεια τετράγωνα, αλλά η υποστήριξη μπορεί να διαφέρει */
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  border: 1px solid #e9ecef;
+  transition: transform 0.15s ease-out, box-shadow 0.15s ease-out;
+  overflow: hidden;
 }
 
 .summary-item:hover {
-  transform: translateY(-3px); /* Μικρό lift effect στο hover */
-  box-shadow: 0 6px 12px rgba(0,0,0,0.07), 0 4px 8px rgba(0,0,0,0.05);
+  transform: translateY(-2px);
+  box-shadow: 0 3px 6px rgba(0,0,0,0.06);
 }
 
-.summary-item .summary-value { 
+.summary-item .summary-value {
   display: block;
-  font-size: 2.5rem; /* 40px, πιο μεγάλο και ευδιάκριτο */
-  font-weight: 700; /* Πιο έντονο */
-  color: #007bff; /* <-- ΠΡΟΣΘΗΚΗ ΧΡΩΜΑΤΟΣ (Μπλε) */
-  margin-bottom: 0.375rem; /* 6px */
-  line-height: 1.1;
+  font-size: 1.5rem; /* Προσαρμογή για να χωράει */
+  font-weight: 600;
+  color: var(--primary-color);
+  margin-bottom: 0.2rem;
+  line-height: 1.2;
 }
 
-/* Ειδικά χρώματα για κάποια values */
 .summary-item[data-status="total_candidates"] .summary-value { color: #1f2937; }
-.summary-item[data-status="hired"] .summary-value { color: #16a34a; } /* Πράσινο για Hired */
+.summary-item[data-status="hired"] .summary-value { color: #16a34a; }
 .summary-item[data-status="rejected"] .summary-value,
 .summary-item[data-status="declined"] .summary-value,
-.summary-item[data-status="parsingfailed"] .summary-value { color: #ef4444; } /* Κόκκινο για αρνητικά */
+.summary-item[data-status="parsingfailed"] .summary-value { color: #ef4444; }
 
-
-.summary-item .summary-label { 
+.summary-item .summary-label {
   display: block;
-  font-size: 0.8rem; 
-  color: #4b5563; /* Πιο σκούρο γκρι για καλύτερη αντίθεση */
+  font-size: 0.65rem; /* Προσαρμογή για να χωράει */
+  color: #4b5563;
   text-transform: uppercase;
-  letter-spacing: 0.05em; 
-  margin-top: 0.375rem; 
+  letter-spacing: 0.02em;
+  margin-top: 0.2rem;
   font-weight: 500;
+  line-height: 1.2;
+  word-break: break-word;
+  max-height: 2.4em;
+  overflow: hidden;
 }

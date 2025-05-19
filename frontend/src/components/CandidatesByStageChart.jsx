@@ -3,9 +3,9 @@ import React from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, Cell } from 'recharts';
 
 const COLORS = [
-  '#2563eb', '#16a34a', '#f97316', '#ca8a04', '#6d28d9', 
+  '#2563eb', '#16a34a', '#f97316', '#ca8a04', '#6d28d9',
   '#db2777', '#475569', '#0891b2', '#d946ef', '#f59e0b',
-  '#84cc16', '#ef4444', '#6b7280', '#3b82f6' 
+  '#84cc16', '#ef4444', '#6b7280', '#3b82f6'
 ];
 
 const CustomTooltipContent = ({ active, payload, label }) => {
@@ -42,27 +42,24 @@ const tooltipStyles = `
 `;
 
 function CandidatesByStageChart({ data }) {
-  console.log('CandidatesByStageChart props received, data:', data);
+  // console.log('CandidatesByStageChart props received, data:', data);
 
-  if (!data || !Array.isArray(data) || data.length === 0) { 
-    console.log('CandidatesByStageChart: No data or data is not an array, rendering placeholder.');
+  if (!data || !Array.isArray(data) || data.length === 0) {
+    // console.log('CandidatesByStageChart: No data or data is not an array, rendering placeholder.');
     return <div style={{ height: '350px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>No pipeline data to display for chart.</div>;
   }
 
   const chartData = data.map(item => ({
-    stage_name: item.stage_name || 'Unknown Stage', 
-    count: typeof item.count === 'number' ? item.count : 0 
+    stage_name: item.stage_name || 'Unknown Stage',
+    count: typeof item.count === 'number' ? item.count : 0
   }));
-  // ΑΦΗΝΟΥΜΕ ΑΥΤΟ ΤΟ FILTER ΠΡΟΣ ΤΟ ΠΑΡΟΝ ΓΙΑ ΝΑ ΔΟΥΜΕ ΤΙ ΣΥΜΒΑΙΝΕΙ
-  // .filter(item => item.count > 0); 
 
-  // Έλεγχος μετά το map, πριν το filter (αν το ενεργοποιήσεις ξανά)
-  if (chartData.length === 0 && data.length > 0) {
-     console.log('CandidatesByStageChart: chartData is empty AFTER mapping (original data was not empty but all counts might be zero). Original data:', data);
-     return <div style={{ height: '350px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>No candidates in any stage with count > 0.</div>;
-  } else if (chartData.length === 0) { // Αν και το αρχικό data ήταν άδειο
-    console.log('CandidatesByStageChart: chartData is empty (original data was also empty).');
-    return <div style={{ height: '350px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>No candidate data available for chart.</div>;
+  const filteredChartData = chartData.filter(item => item.count > 0);
+
+  if (filteredChartData.length === 0) {
+    // console.log('CandidatesByStageChart: chartData is empty AFTER filtering for count > 0. Original mapped data:', chartData);
+    // ΔΙΟΡΘΩΣΗ ΕΔΩ
+    return <div style={{ height: '350px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#64748b' }}>No candidates in any active stage with count > 0.</div>;
   }
 
 
@@ -71,40 +68,40 @@ function CandidatesByStageChart({ data }) {
       <style>{tooltipStyles}</style>
       <ResponsiveContainer width="100%" height={350}>
         <BarChart
-          data={chartData} // Χρησιμοποίησε το chartData που μπορεί να είναι φιλτραρισμένο ή όχι
+          data={filteredChartData}
           margin={{
             top: 5,
-            right: 5, 
-            left: 5,  
-            bottom: 80, 
+            right: 5,
+            left: 5,
+            bottom: 80,
           }}
-          barSize={chartData.length < 5 ? 50 : (chartData.length < 10 ? 30 : 20) }
+          barSize={filteredChartData.length < 5 ? 50 : (filteredChartData.length < 10 ? 30 : 20) }
         >
           <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-          <XAxis 
-            dataKey="stage_name" 
-            angle={-40}       
+          <XAxis
+            dataKey="stage_name"
+            angle={-40}
             textAnchor="end"
-            height={90}        
-            interval={0}       
-            tick={{ fontSize: 11, fill: '#475569' }} 
-            dy={5} 
+            height={90}
+            interval={0}
+            tick={{ fontSize: 11, fill: '#475569' }}
+            dy={5}
           />
-          <YAxis 
-            allowDecimals={false} 
+          <YAxis
+            allowDecimals={false}
             tick={{ fontSize: 12, fill: '#475569' }}
-            label={{ 
-              value: 'Number of Candidates', 
-              angle: -90, 
-              position: 'insideLeft', 
-              offset: -5, 
-              style: { textAnchor: 'middle', fontSize: 13, fill: '#334155' } 
+            label={{
+              value: 'Number of Candidates',
+              angle: -90,
+              position: 'insideLeft',
+              offset: -5,
+              style: { textAnchor: 'middle', fontSize: 13, fill: '#334155' }
             }}
-            width={80} 
+            width={80}
           />
           <Tooltip content={<CustomTooltipContent />} cursor={{ fill: 'rgba(206, 206, 206, 0.2)' }} />
           <Bar dataKey="count" name="Candidates" radius={[5, 5, 0, 0]} >
-            {chartData.map((entry, index) => (
+            {filteredChartData.map((entry, index) => (
               <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
             ))}
           </Bar>
