@@ -1,0 +1,20 @@
+Αγαπητέ/ή {{ recruiter_name }},
+
+Ο/Η υποψήφios/α {{ candidate_name }} έχει ακυρώσει την προγραμματισμένη συνέντευξη {{ position_name_display }}.
+
+Αρχικά Προγραμματισμένη Ώρα: (Αν είναι διαθέσιμη, μπορείς να την προσθέσεις)
+{% if cancellation_reason and cancellation_reason != "No specific reason provided." %}Λόγος Ακύρωσης (από υποψήφιο): {{ cancellation_reason }}{% endif %}
+Προτίμηση για Επαναπρογραμματισμό: {{ reschedule_message }}
+
+{% if view_candidate_url and view_candidate_url != "#" %}
+Μπορείτε να δείτε το προφίλ του υποψηφίου και το ιστορικό της συνέντευξης στο σύστημα:
+{{ view_candidate_url }}
+{% endif %}
+
+Παρακαλούμε επικοινωνήστε με τον υποψήφιο αν χρειάζεται περαιτέρω συντονισμός, ειδικά αν ζήτησε επαναπρογραμματισμό.
+
+Regards,
+NEXONA ATS System
+
+---
+© {{ now.year }} NEXONA.

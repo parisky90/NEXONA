@@ -1,0 +1,40 @@
+Αγαπητέ/ή {{ candidate_name }},
+
+Σε ευχαριστούμε για το ενδιαφέρον σου {{ position_name_display }} στην εταιρεία {{ company_name }}.
+Θα θέλαμε να σε προσκαλέσουμε σε μια συνέντευξη.
+
+{% if interview_type or location %}
+Τύπος Συνέντευξης: {{ interview_type }}
+Τοποθεσία/Μέσο: {{ location }}
+{% endif %}
+
+{% if notes_for_candidate %}
+Σημειώσεις από τον Recruiter:
+{{ notes_for_candidate }}
+{% endif %}
+
+Παρακαλώ επίλεξε μία από τις παρακάτω προτεινόμενες ώρες που σε εξυπηρετεί καλύτερα:
+
+{% if proposed_slots %}
+{% for slot in proposed_slots %}
+- {{ slot.start_display }}
+  Επιβεβαίωση: {{ slot.confirmation_url }}
+{% endfor %}
+{% else %}
+Δεν υπάρχουν διαθέσιμα slots αυτή τη στιγμή. Θα επικοινωνήσουμε σύντομα μαζί σου.
+{% endif %}
+
+Αν καμία από τις παραπάνω ώρες δεν σε εξυπηρετεί, μπορείς να μας ενημερώσεις πατώντας εδώ:
+{{ reject_all_url }}
+
+Ανυπομονούμε να μιλήσουμε μαζί σου!
+
+Με εκτίμηση,
+Η ομάδα προσλήψεων της {{ company_name }}
+{% if recruiter_name and recruiter_name != "Recruitment Team" %}
+(Επικοινωνία από: {{ recruiter_name }})
+{% endif %}
+
+---
+© {{ now.year if now else '2024' }} {{ company_name }}.
+Επισκεφθείτε την ιστοσελίδα μας: {{ app_home_url }}

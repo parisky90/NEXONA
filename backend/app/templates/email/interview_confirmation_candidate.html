@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+    <meta charset="UTF-8">
+    <title>Η Συνέντευξή σας Επιβεβαιώθηκε - {{ company_name }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #f4f4f4; }
+        .email-container { max-width: 600px; margin: 20px auto; background-color: #ffffff; padding: 20px; border: 1px solid #dddddd; }
+        .header { background-color: #28a745; color: #ffffff; padding: 10px; text-align: center; } /* Green for confirmation */
+        .content { padding: 20px; }
+        .content p { margin-bottom: 15px; }
+        .details { background-color: #f9f9f9; padding: 15px; border: 1px solid #eee; margin-bottom: 20px; }
+        .button-cancel { display: inline-block; padding: 10px 15px; background-color: #ffc107; color: #212529; text-decoration: none; border-radius: 5px; margin-top: 15px; }
+        .footer { text-align: center; padding: 10px; font-size: 0.9em; color: #777777; }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <h2>Συνέντευξη Επιβεβαιώθηκε!</h2>
+        </div>
+        <div class="content">
+            <p>Αγαπητέ/ή {{ candidate_name }},</p>
+            <p>
+                Επιβεβαιώνουμε ότι η συνέντευξή σας {{ position_name_display }} με την εταιρεία <strong>{{ company_name }}</strong> έχει προγραμματιστεί για:
+            </p>
+            <div class="details">
+                <p><strong>Ημερομηνία & Ώρα:</strong> {{ confirmed_time_display }}</p>
+                {% if location and location != "To be confirmed" %}
+                <p><strong>Τοποθεσία/Μέσο:</strong> {{ location }}</p>
+                {% endif %}
+                {% if interview_type %}
+                <p><strong>Τύπος Συνέντευξης:</strong> {{ interview_type }}</p>
+                {% endif %}
+            </div>
+
+            {% if notes_for_candidate and notes_for_candidate.strip() != "" %}
+                <p><strong>Πρόσθετες Σημειώσεις:</strong><br>{{ notes_for_candidate | safe }}</p>
+            {% endif %}
+
+            <p>Ανυπομονούμε να σας συναντήσουμε!</p>
+
+            {% if cancel_url %}
+            <p>
+                Αν χρειαστεί να ακυρώσετε ή να ζητήσετε αλλαγή της ώρας, παρακαλούμε χρησιμοποιήστε τον παρακάτω σύνδεσμο τουλάχιστον
+                {{ config.INTERVIEW_CANCELLATION_THRESHOLD_HOURS }} ώρες πριν την προγραμματισμένη ώρα:
+                <br>
+                <a href="{{ cancel_url }}" class="button-cancel">Διαχείριση Συνέντευξης</a>
+            </p>
+            {% endif %}
+
+            <p>
+                Με εκτίμηση,<br>
+                Η ομάδα προσλήψεων της {{ company_name }}
+            </p>
+        </div>
+        <div class="footer">
+            <p>© {{ now.year }} {{ company_name }}. All rights reserved.</p>
+            <p><a href="{{ app_home_url }}">Επισκεφθείτε την ιστοσελίδα μας</a></p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,18 @@
+Αγαπητέ/ή {{ recruiter_name }},
+
+Η συνέντευξη με τον/την υποψήφιο/α {{ candidate_name }} {{ position_name_display }} έχει προγραμματιστεί για:
+
+Ημερομηνία & Ώρα: {{ confirmed_time_display }}
+{% if location and location != "To be confirmed" %}Τοποθεσία/Μέσο: {{ location }}{% endif %}
+{% if interview_type %}Τύπος Συνέντευξης: {{ interview_type }}{% endif %}
+
+{% if view_interview_url and view_interview_url != "#" %}
+Μπορείτε να δείτε τις λεπτομέρειες της συνέντευξης και του υποψηφίου στο σύστημα:
+{{ view_interview_url }}
+{% endif %}
+
+Regards,
+NEXONA ATS System
+
+---
+© {{ now.year }} NEXONA.

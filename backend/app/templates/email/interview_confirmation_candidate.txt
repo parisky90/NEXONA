@@ -1,0 +1,26 @@
+Αγαπητέ/ή {{ candidate_name }},
+
+Επιβεβαιώνουμε ότι η συνέντευξή σας {{ position_name_display }} με την εταιρεία {{ company_name }} έχει προγραμματιστεί για:
+
+Ημερομηνία & Ώρα: {{ confirmed_time_display }}
+{% if location and location != "To be confirmed" %}Τοποθεσία/Μέσο: {{ location }}{% endif %}
+{% if interview_type %}Τύπος Συνέντευξης: {{ interview_type }}{% endif %}
+
+{% if notes_for_candidate and notes_for_candidate.strip() != "" %}
+Πρόσθετες Σημειώσεις:
+{{ notes_for_candidate }}
+{% endif %}
+
+Ανυπομονούμε να σας συναντήσουμε!
+
+{% if cancel_url %}
+Αν χρειαστεί να ακυρώσετε ή να ζητήσετε αλλαγή της ώρας, παρακαλούμε χρησιμοποιήστε τον παρακάτω σύνδεσμο τουλάχιστον {{ config.INTERVIEW_CANCELLATION_THRESHOLD_HOURS }} ώρες πριν την προγραμματισμένη ώρα:
+{{ cancel_url }}
+{% endif %}
+
+Με εκτίμηση,
+Η ομάδα προσλήψεων της {{ company_name }}
+
+---
+© {{ now.year }} {{ company_name }}.
+Επισκεφθείτε την ιστοσελίδα μας: {{ app_home_url }}

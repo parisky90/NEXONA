@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+    <meta charset="UTF-8">
+    <title>Πρόσκληση για Συνέντευξη - {{ company_name }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #f4f4f4; }
+        .email-container { max-width: 600px; margin: 20px auto; background-color: #ffffff; padding: 20px; border: 1px solid #dddddd; }
+        .header { background-color: #004a99; color: #ffffff; padding: 10px; text-align: center; }
+        .content { padding: 20px; }
+        .content p { margin-bottom: 15px; }
+        .content ul { list-style: none; padding: 0; }
+        .content ul li { margin-bottom: 10px; background-color: #f9f9f9; padding: 10px; border: 1px solid #eee; }
+        .content ul li a { text-decoration: none; color: #007bff; font-weight: bold; }
+        .button { display: inline-block; padding: 10px 20px; background-color: #dc3545; color: #ffffff; text-decoration: none; border-radius: 5px; margin-top: 10px; }
+        .footer { text-align: center; padding: 10px; font-size: 0.9em; color: #777777; }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <h2>Πρόσκληση για Συνέντευξη</h2>
+        </div>
+        <div class="content">
+            <p>Αγαπητέ/ή {{ candidate_name }},</p>
+            <p>
+                Σε ευχαριστούμε για το ενδιαφέρον σου {{ position_name_display }} στην εταιρεία <strong>{{ company_name }}</strong>.
+                Θα θέλαμε να σε προσκαλέσουμε σε μια συνέντευξη.
+            </p>
+
+            {% if interview_type or location %}
+            <p>
+                <strong>Τύπος Συνέντευξης:</strong> {{ interview_type }}<br>
+                <strong>Τοποθεσία/Μέσο:</strong> {{ location }}
+            </p>
+            {% endif %}
+
+            {% if notes_for_candidate %}
+            {# Το notes_for_candidate τώρα περιέχει <br> tags από το Python #}
+            <p><strong>Σημειώσεις από τον Recruiter:</strong><br>{{ notes_for_candidate | safe }}</p>
+            {% endif %}
+
+            <p>Παρακαλώ επίλεξε μία από τις παρακάτω προτεινόμενες ώρες που σε εξυπηρετεί καλύτερα:</p>
+            {% if proposed_slots %}
+            <ul>
+                {% for slot in proposed_slots %}
+                <li>
+                    {{ slot.start_display }} - <a href="{{ slot.confirmation_url }}">Επιβεβαίωση αυτού του Slot</a>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p>Δεν υπάρχουν διαθέσιμα slots αυτή τη στιγμή. Θα επικοινωνήσουμε σύντομα μαζί σου.</p>
+            {% endif %}
+
+            <p>Αν καμία από τις παραπάνω ώρες δεν σε εξυπηρετεί, μπορείς να μας ενημερώσεις πατώντας εδώ:
+                <a href="{{ reject_all_url }}" class="button">Καμία ώρα δεν με εξυπηρετεί</a>
+            </p>
+
+            <p>Ανυπομονούμε να μιλήσουμε μαζί σου!</p>
+            <p>
+                Με εκτίμηση,<br>
+                Η ομάδα προσλήψεων της {{ company_name }}<br>
+                {% if recruiter_name and recruiter_name != "Recruitment Team" %}
+                (Επικοινωνία από: {{ recruiter_name }})
+                {% endif %}
+            </p>
+        </div>
+        <div class="footer">
+            <p>© {{ now.year if now else '2024' }} {{ company_name }}. All rights reserved.</p>
+            <p><a href="{{ app_home_url }}">Επισκεφθείτε την ιστοσελίδα μας</a></p>
+        </div>
+    </div>
+</body>
+</html>

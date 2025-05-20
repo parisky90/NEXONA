@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+    <meta charset="UTF-8">
+    <title>Ακύρωση Συνέντευξης από Υποψήφιο: {{ candidate_name }} - {{ company_name }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #f4f4f4; }
+        .email-container { max-width: 600px; margin: 20px auto; background-color: #ffffff; padding: 20px; border: 1px solid #dddddd; }
+        .header { background-color: #dc3545; color: #ffffff; padding: 10px; text-align: center; } /* Red for cancellation */
+        .content { padding: 20px; }
+        .content p { margin-bottom: 15px; }
+        .details { background-color: #f9f9f9; padding: 15px; border: 1px solid #eee; margin-bottom: 20px; }
+        .button-view { display: inline-block; padding: 10px 20px; background-color: #007bff; color: #ffffff; text-decoration: none; border-radius: 5px; margin-top: 15px; }
+        .footer { text-align: center; padding: 10px; font-size: 0.9em; color: #777777; }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <h2>Ειδοποίηση: Ακύρωση Συνέντευξης από Υποψήφιο</h2>
+        </div>
+        <div class="content">
+            <p>Αγαπητέ/ή {{ recruiter_name }},</p>
+            <p>
+                Ο/Η υποψήφιος/α <strong>{{ candidate_name }}</strong> έχει ακυρώσει την προγραμματισμένη συνέντευξη {{ position_name_display }}.
+            </p>
+            <div class="details">
+                <p><strong>Αρχικά Προγραμματισμένη Ώρα:</strong> (Αν είναι διαθέσιμη, μπορείς να την προσθέσεις από το interview object πριν την ακύρωση)</p>
+                {% if cancellation_reason and cancellation_reason != "No specific reason provided." %}
+                <p><strong>Λόγος Ακύρωσης (από υποψήφιο):</strong> {{ cancellation_reason }}</p>
+                {% endif %}
+                <p><strong>Προτίμηση για Επαναπρογραμματισμό:</strong> {{ reschedule_message }}</p>
+            </div>
+
+            {% if view_candidate_url and view_candidate_url != "#" %}
+            <p>
+                Μπορείτε να δείτε το προφίλ του υποψηφίου και το ιστορικό της συνέντευξης στο σύστημα:
+                <br>
+                <a href="{{ view_candidate_url }}" class="button-view">Προβολή Υποψηφίου</a>
+            </p>
+            {% endif %}
+
+            <p>Παρακαλούμε επικοινωνήστε με τον υποψήφιο αν χρειάζεται περαιτέρω συντονισμός, ειδικά αν ζήτησε επαναπρογραμματισμό.</p>
+
+            <p>
+                Regards,<br>
+                NEXONA ATS System
+            </p>
+        </div>
+        <div class="footer">
+             <p>© {{ now.year }} NEXONA. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>
