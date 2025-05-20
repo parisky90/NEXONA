@@ -5,7 +5,7 @@ from werkzeug.utils import secure_filename
 from app import db, s3_service_instance, celery
 from app.models import (
     User, Company, Candidate, Position, CompanySettings,
-    Interview, InterviewStatus, InterviewSlot
+    Interview, InterviewStatus, InterviewSlot, Branch  # <<< ΠΡΟΣΘΗΚΗ Branch
 )
 # from app.config import Config # Δεν χρειάζεται άμεσο import του Config εδώ, χρησιμοποιούμε current_app.config
 from datetime import datetime, timedelta, timezone as dt_timezone
@@ -105,11 +105,9 @@ def session_status():
     return jsonify({'is_authenticated': True, 'user': user_info}), 200
 
 
-# === Dashboard Summary ===
 @bp.route('/dashboard/summary', methods=['GET'])
 @login_required
 def dashboard_summary():
-    # ... (ΚΩΔΙΚΑΣ ΤΟΥ dashboard_summary() ΟΠΩΣ ΣΤΟ ΠΡΟΗΓΟΥΜΕΝΟ ΜΗΝΥΜΑ ΓΙΑ ΕΠΑΝΑΦΟΡΑ ΚΛΕΙΔΙΩΝ) ...
     current_app.logger.info(
         f"--- HIT /api/v1/dashboard/summary (user: {current_user.id if current_user.is_authenticated else 'Guest'}, role: {current_user.role if current_user.is_authenticated else 'N/A'}, company_id from user: {current_user.company_id if current_user.is_authenticated else 'N/A'}) ---")
     current_app.logger.debug(f"Request args for summary: {request.args}")
@@ -221,9 +219,6 @@ def dashboard_summary():
 
 
 # === Candidate Routes ===
-# ... (upload_cv, get_candidates, get_candidate_detail, update_candidate_detail, delete_candidate, propose_interview,
-#      confirm_interview_slot, reject_interview_slots ΠΑΡΑΜΕΝΟΥΝ ΙΔΙΑ ΜΕ ΤΗΝ ΠΡΟΗΓΟΥΜΕΝΗ ΠΛΗΡΗ ΕΚΔΟΣΗ ΠΟΥ ΕΣΤΕΙΛΑ)
-
 @bp.route('/upload', methods=['POST'])
 @login_required
 def upload_cv():
@@ -259,6 +254,13 @@ def upload_cv():
         file_content_bytes = file.read()
 
         position_name_from_form = request.form.get('position', None)
+        branch_ids_str = request.form.get('branch_ids', '')
+        branch_ids = []
+        if branch_ids_str:
+            try:
+                branch_ids = [int(b_id.strip()) for b_id in branch_ids_str.split(',') if b_id.strip().isdigit()]
+            except ValueError:
+                current_app.logger.warning(f"Invalid branch_ids format received: {branch_ids_str}")
 
         try:
             file_key = f"cvs/{target_company_id}/{uuid.uuid4()}_{filename}"
@@ -301,11 +303,22 @@ def upload_cv():
                 if position not in new_candidate.positions:
                     new_candidate.positions.append(position)
 
+            if branch_ids:
+                branches_to_assign = Branch.query.filter(Branch.id.in_(branch_ids),
+                                                         Branch.company_id == target_company_id).all()
+                for branch in branches_to_assign:
+                    if branch not in new_candidate.branches:
+                        new_candidate.branches.append(branch)
+                current_app.logger.info(
+                    f"Associated candidate {new_candidate.candidate_id} with branches: {[b.id for b in branches_to_assign]}")
+
             new_candidate.add_history_event(
                 event_type="CV_UPLOADED",
                 description=f"CV '{filename}' uploaded by {current_user.username}.",
                 actor_id=current_user.id,
-                details={"s3_key": file_key, "position_applied": position_name_from_form or "N/A"}
+                details={"s3_key": file_key,
+                         "position_applied": position_name_from_form or "N/A",
+                         "branch_ids_applied": branch_ids}
             )
             db.session.commit()
 
@@ -375,7 +388,8 @@ def get_candidates(status_in_path=None):
     try:
         pagination = query.paginate(page=page, per_page=per_page, error_out=False)
         candidates_data = [
-            candidate_obj.to_dict(include_history=True, include_interviews=True, include_cv_url=True)
+            candidate_obj.to_dict(include_history=True, include_interviews=True, include_cv_url=True,
+                                  include_branches=True)
             for candidate_obj in pagination.items
         ]
         total_results = pagination.total
@@ -409,7 +423,8 @@ def get_candidate_detail(candidate_uuid):
     if current_user.role != 'superadmin' and current_user.company_id != candidate.company_id:
         return jsonify({'error': 'Forbidden: You do not have permission to view this candidate'}), 403
 
-    return jsonify(candidate.to_dict(include_history=True, include_interviews=True, include_cv_url=True)), 200
+    return jsonify(candidate.to_dict(include_history=True, include_interviews=True, include_cv_url=True,
+                                     include_branches=True)), 200
 
 
 @bp.route('/candidate/<string:candidate_uuid>', methods=['PUT'])
@@ -444,10 +459,20 @@ def update_candidate_detail(candidate_uuid):
 
     new_status_from_payload = data.get('current_status')
 
+    offer_made_in_this_update = False
+    if new_status_from_payload == 'OfferMade' and old_status_for_log != 'OfferMade':
+        offer_made_in_this_update = True
+        candidate.offer_acceptance_token = secrets.token_urlsafe(32)
+        candidate.offer_acceptance_token_expiration = datetime.now(dt_timezone.utc) + timedelta(
+            days=current_app.config.get('INTERVIEW_TOKEN_EXPIRATION_DAYS', 7))
+        updated_fields_log['offer_acceptance_token'] = {'new': 'generated'}
+
     if new_status_from_payload == 'NeedsReview' and old_status_for_log in ['Declined', 'Rejected', 'ParsingFailed',
                                                                            'Hired', 'OfferMade']:
         candidate.evaluation_rating = None
         candidate.candidate_confirmation_status = None
+        candidate.offer_acceptance_token = None
+        candidate.offer_acceptance_token_expiration = None
 
         active_interviews = Interview.query.filter_by(candidate_id=candidate.candidate_id).filter(
             Interview.status.in_([
@@ -466,6 +491,7 @@ def update_candidate_detail(candidate_uuid):
         updated_fields_log['re_evaluation_reset'] = {
             'evaluation_rating': 'cleared',
             'candidate_confirmation_status': 'cleared',
+            'offer_acceptance_token': 'cleared',
             'active_interviews_cancelled': len(cancelled_interview_ids),
             'cancelled_interview_ids': [str(cid) for cid in cancelled_interview_ids]
         }
@@ -553,13 +579,44 @@ def update_candidate_detail(candidate_uuid):
         candidate.offers = new_offers_for_db
         flag_modified(candidate, "offers")
 
-    if not updated_fields_log:
+    if 'branch_ids' in data and isinstance(data['branch_ids'], list):
+        current_branch_ids = {branch.id for branch in candidate.branches}
+        new_branch_ids_from_data = set()
+        for b_id in data['branch_ids']:
+            try:
+                new_branch_ids_from_data.add(int(b_id))
+            except (ValueError, TypeError):
+                current_app.logger.warning(
+                    f"Invalid branch ID '{b_id}' received for candidate {candidate_uuid}. Skipping.")
+
+        if current_branch_ids != new_branch_ids_from_data:
+            updated_fields_log['branches'] = {'old_ids': sorted(list(current_branch_ids)),
+                                              'new_ids': sorted(list(new_branch_ids_from_data))}
+
+            new_branches_for_candidate = []
+            if new_branch_ids_from_data:
+                valid_branches = Branch.query.filter(
+                    Branch.id.in_(list(new_branch_ids_from_data)),
+                    Branch.company_id == candidate.company_id
+                ).all()
+                new_branches_for_candidate = valid_branches
+
+            candidate.branches = new_branches_for_candidate
+            current_app.logger.info(
+                f"Updated branches for candidate {candidate.candidate_id} to IDs: {[b.id for b in new_branches_for_candidate]}")
+
+    if not updated_fields_log and not offer_made_in_this_update:
         return jsonify({'message': 'No changes detected or no updatable fields provided.'}), 200
 
     history_description = f"Candidate details manually updated by {current_user.username}."
     if status_changed:
         history_description = f"Status changed by {current_user.username} from '{old_status_for_log}' to '{candidate.current_status}'."
-        if len(updated_fields_log) > 1:
+        other_changes_count = len(updated_fields_log)
+        if 'offer_acceptance_token' in updated_fields_log: other_changes_count -= 1
+        if 'branches' in updated_fields_log: other_changes_count -= 1
+        if 'current_status' in updated_fields_log: other_changes_count -= 1
+
+        if other_changes_count > 0:
             history_description += " Other fields also updated."
     elif updated_fields_log:
         history_description = f"Candidate details updated by {current_user.username} (status remained '{candidate.current_status}')."
@@ -576,9 +633,26 @@ def update_candidate_detail(candidate_uuid):
 
     try:
         db.session.commit()
+
+        if offer_made_in_this_update:
+            last_offer_details = candidate.offers[-1] if candidate.offers else {}
+            celery.send_task('app.tasks.communication.send_offer_made_email_to_candidate_task',
+                             args=[str(candidate.candidate_id), last_offer_details])
+            current_app.logger.info(f"Celery task for 'Offer Made' dispatched for candidate {candidate.candidate_id}")
+
+        elif status_changed and candidate.current_status == 'Hired':
+            celery.send_task('app.tasks.communication.send_hired_confirmation_email_to_candidate_task',
+                             args=[str(candidate.candidate_id)])
+            current_app.logger.info(f"Celery task for 'Hired' dispatched for candidate {candidate.candidate_id}")
+        elif status_changed and candidate.current_status == 'Declined' and old_status_for_log == 'OfferMade':
+            celery.send_task('app.tasks.communication.send_offer_declined_notification_to_recruiter_task',
+                             args=[str(candidate.candidate_id)])
+            current_app.logger.info(
+                f"Celery task for 'Offer Declined by Candidate' dispatched for candidate {candidate.candidate_id}")
+
         updated_candidate = db.session.get(Candidate, candidate_id_obj)
-        return jsonify(
-            updated_candidate.to_dict(include_history=True, include_interviews=True, include_cv_url=True)), 200
+        return jsonify(updated_candidate.to_dict(include_history=True, include_interviews=True, include_cv_url=True,
+                                                 include_branches=True)), 200
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error updating candidate {candidate_uuid}: {e}", exc_info=True)
@@ -588,6 +662,7 @@ def update_candidate_detail(candidate_uuid):
 @bp.route('/candidate/<string:candidate_uuid>', methods=['DELETE'])
 @login_required
 def delete_candidate(candidate_uuid):
+    # ... (ίδιο με πριν) ...
     try:
         candidate_id_obj = uuid.UUID(candidate_uuid)
     except ValueError:
@@ -637,6 +712,7 @@ def delete_candidate(candidate_uuid):
 @bp.route('/candidates/<string:candidate_uuid>/propose-interview', methods=['POST'])
 @login_required
 def propose_interview(candidate_uuid):
+    # ... (ίδιο με πριν) ...
     current_app.logger.info(
         f"Propose interview called by user {current_user.id} (Role: {current_user.role}) for candidate {candidate_uuid}")
 
@@ -995,7 +1071,6 @@ def reject_interview_slots(token):
                                company_name=company_name_for_page), 500
 
 
-# --- ΔΙΟΡΘΩΜΕΝΗ ΣΥΝΑΡΤΗΣΗ cancel_interview_by_candidate ---
 @bp.route('/interviews/cancel-by-candidate/<string:cancel_token>', methods=['GET', 'POST'])
 def cancel_interview_by_candidate(cancel_token):
     interview = Interview.query.filter_by(cancellation_token=cancel_token).first()
@@ -1122,26 +1197,23 @@ def cancel_interview_by_candidate(cancel_token):
                            )
 
 
-# --- ΝΕΟ ENDPOINT: Cancel Interview by Recruiter ---
 @bp.route('/interviews/<int:interview_id>/cancel-by-recruiter', methods=['POST'])
 @login_required
 def cancel_interview_by_recruiter(interview_id):
-    # Έλεγχος δικαιωμάτων: Μόνο company_admin, superadmin ή ο recruiter που όρισε τη συνέντευξη
     interview = db.session.get(Interview, interview_id)
     if not interview:
         return jsonify({'error': 'Interview not found'}), 404
 
-    candidate = interview.candidate  # Παίρνουμε τον υποψήφιο
-    if not candidate:  # Απίθανο αν υπάρχει interview, αλλά για ασφάλεια
+    candidate = interview.candidate
+    if not candidate:
         return jsonify({'error': 'Candidate associated with this interview not found'}), 404
 
-    # Έλεγχος δικαιωμάτων
     can_cancel = False
     if current_user.role == 'superadmin':
         can_cancel = True
     elif current_user.role == 'company_admin' and current_user.company_id == interview.company_id:
         can_cancel = True
-    elif current_user.id == interview.recruiter_id:  # Ο recruiter που την όρισε
+    elif current_user.id == interview.recruiter_id:
         can_cancel = True
 
     if not can_cancel:
@@ -1162,7 +1234,6 @@ def cancel_interview_by_recruiter(interview_id):
     interview.status = InterviewStatus.CANCELLED_BY_RECRUITER
     interview.internal_notes = (interview.internal_notes or "") + \
                                f"\nCancelled by {current_user.username} on {datetime.now(dt_timezone.utc).strftime('%Y-%m-%d')}. Reason: {reason}"
-    # Ακύρωση των tokens αν υπάρχουν (αν ήταν PROPOSED ή SCHEDULED)
     interview.confirmation_token = None
     interview.token_expiration = None
     interview.cancellation_token = None
@@ -1170,19 +1241,14 @@ def cancel_interview_by_recruiter(interview_id):
     interview.updated_at = datetime.now(dt_timezone.utc)
 
     if candidate:
-        # Αποφασίζουμε σε ποιο status θα πάει ο υποψήφιος
-        # Αν ήταν 'Interview Proposed' ή 'Interview Scheduled', τον γυρνάμε σε 'Interested'
-        # ή 'Needs Review' αν δεν είχε περάσει από εκεί.
-        new_candidate_status = "Interested"  # Default
+        new_candidate_status = "Interested"
         if old_candidate_status == "Interview Proposed" or old_candidate_status == "Interview Scheduled":
             candidate.current_status = new_candidate_status
-        # Εναλλακτικά, θα μπορούσαμε να τον πάμε σε ένα πιο γενικό status αν δεν ξέρουμε το προηγούμενο.
-        # candidate.current_status = "Needs Review"
 
         if candidate.current_status != old_candidate_status:
             candidate.status_last_changed_date = datetime.now(dt_timezone.utc)
 
-        candidate.candidate_confirmation_status = "RecruiterCancelled"  # Ένα νέο status για να ξέρουμε
+        candidate.candidate_confirmation_status = "RecruiterCancelled"
         candidate.updated_at = datetime.now(dt_timezone.utc)
         candidate.add_history_event(
             event_type="INTERVIEW_CANCELLED_BY_RECRUITER",
@@ -1202,17 +1268,14 @@ def cancel_interview_by_recruiter(interview_id):
         current_app.logger.info(
             f"Interview {interview_id} cancelled by recruiter {current_user.username}. Reason: {reason}")
 
-        # Κλήση Celery task για ειδοποίηση του υποψηφίου
-        task_name = 'app.tasks.communication.send_interview_cancellation_to_candidate_task'  # Νέο task
+        task_name = 'app.tasks.communication.send_interview_cancellation_to_candidate_task'
         celery.send_task(task_name, args=[str(interview.id), reason])
         current_app.logger.info(
-            f"Celery task '{task_name}' dispatched for cancelled interview {interview.id} to notify candidate.")
+            f"Celery task '{task_name}' dispatched for cancelled interview {interview_id} to notify candidate.")
 
-        # Επιστροφή του ενημερωμένου interview και candidate object
         return jsonify({
             'message': 'Interview cancelled successfully.',
             'interview': interview.to_dict(include_slots=True, include_candidate_info=False),
-            # Στέλνουμε χωρίς candidate info για να μην έχουμε κυκλική εξάρτηση αν το candidate.to_dict καλεί interviews
             'candidate_status': candidate.current_status if candidate else None
         }), 200
     except Exception as e:
@@ -1220,6 +1283,106 @@ def cancel_interview_by_recruiter(interview_id):
         current_app.logger.error(f"Error cancelling interview {interview_id} by recruiter: {e}", exc_info=True)
         return jsonify({'error': 'Failed to cancel interview.'}), 500
 
+
+# --- ΝΕΑ ENDPOINTS ΓΙΑ OFFER ACCEPT/REJECT ---
+@bp.route('/offer/accept/<string:token>', methods=['GET'])
+def accept_offer(token):
+    candidate = Candidate.query.filter_by(offer_acceptance_token=token).first()
+
+    company_name_for_page = "Our Company"
+    if candidate and candidate.company:
+        company_name_for_page = candidate.company.name
+
+    if not candidate or not candidate.is_offer_token_valid():
+        return render_template("interview_action_response.html", title="Error",
+                               message="Invalid or expired offer link.",
+                               status_class="is-danger", company_name=company_name_for_page), 404  # Ή 400
+
+    if candidate.current_status != 'OfferMade':
+        return render_template("interview_action_response.html", title="Information",
+                               message="This offer has already been processed or is no longer active.",
+                               status_class="is-info", company_name=company_name_for_page), 400
+
+    old_status = candidate.current_status
+    candidate.current_status = 'Hired'
+    candidate.status_last_changed_date = datetime.now(dt_timezone.utc)
+    candidate.offer_acceptance_token = None  # Invalidate token
+    candidate.offer_acceptance_token_expiration = None
+    candidate.updated_at = datetime.now(dt_timezone.utc)
+    candidate.add_history_event(
+        event_type="OFFER_ACCEPTED_BY_CANDIDATE",
+        description=f"Candidate accepted the offer. Status changed from '{old_status}' to 'Hired'.",
+        actor_username=candidate.get_full_name() or "Candidate",
+        details={'offer_token_used': token}
+    )
+
+    try:
+        db.session.commit()
+        celery.send_task('app.tasks.communication.send_hired_confirmation_email_to_candidate_task',
+                         args=[str(candidate.candidate_id)])
+        # Εδώ θα μπορούσες να στείλεις και email στον recruiter
+        # celery.send_task('app.tasks.communication.send_offer_accepted_notification_to_recruiter_task', args=[str(candidate.candidate_id)])
+        current_app.logger.info(f"Candidate {candidate.candidate_id} accepted offer. Status set to Hired.")
+        return render_template("interview_action_response.html", title="Offer Accepted!",
+                               message="Congratulations! Your offer has been accepted. We will be in touch soon with the next steps.",
+                               status_class="is-success", company_name=company_name_for_page)
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error processing offer acceptance for token {token}: {e}", exc_info=True)
+        return render_template("interview_action_response.html", title="System Error",
+                               message="An error occurred while processing your acceptance. Please contact us.",
+                               status_class="is-danger", company_name=company_name_for_page), 500
+
+
+@bp.route('/offer/reject/<string:token>', methods=['GET'])  # Ας το κρατήσουμε GET για απλότητα προς το παρόν
+def reject_offer(token):
+    candidate = Candidate.query.filter_by(offer_acceptance_token=token).first()
+
+    company_name_for_page = "Our Company"
+    if candidate and candidate.company:
+        company_name_for_page = candidate.company.name
+
+    if not candidate or not candidate.is_offer_token_valid():
+        return render_template("interview_action_response.html", title="Error",
+                               message="Invalid or expired offer link.",
+                               status_class="is-danger", company_name=company_name_for_page), 404
+
+    if candidate.current_status != 'OfferMade':
+        return render_template("interview_action_response.html", title="Information",
+                               message="This offer has already been processed or is no longer active.",
+                               status_class="is-info", company_name=company_name_for_page), 400
+
+    old_status = candidate.current_status
+    candidate.current_status = 'Declined'  # Το status γίνεται Declined
+    candidate.status_last_changed_date = datetime.now(dt_timezone.utc)
+    candidate.offer_acceptance_token = None  # Invalidate token
+    candidate.offer_acceptance_token_expiration = None
+    candidate.updated_at = datetime.now(dt_timezone.utc)
+    # Εδώ θα μπορούσες να προσθέσεις πεδίο για λόγο απόρριψης αν το έπαιρνες από φόρμα
+    candidate.add_history_event(
+        event_type="OFFER_REJECTED_BY_CANDIDATE",
+        description=f"Candidate declined the offer. Status changed from '{old_status}' to 'Declined'.",
+        actor_username=candidate.get_full_name() or "Candidate",
+        details={'offer_token_used': token}
+    )
+
+    try:
+        db.session.commit()
+        celery.send_task('app.tasks.communication.send_offer_declined_notification_to_recruiter_task',
+                         args=[str(candidate.candidate_id)])
+        current_app.logger.info(f"Candidate {candidate.candidate_id} rejected offer. Status set to Declined.")
+        return render_template("interview_action_response.html", title="Offer Declined",
+                               message="Thank you for your response. We understand your decision.",
+                               status_class="is-info", company_name=company_name_for_page)
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error processing offer rejection for token {token}: {e}", exc_info=True)
+        return render_template("interview_action_response.html", title="System Error",
+                               message="An error occurred while processing your response. Please contact us.",
+                               status_class="is-danger", company_name=company_name_for_page), 500
+
+
+# --- ΤΕΛΟΣ ΝΕΩΝ ENDPOINTS ΓΙΑ OFFER ---
 
 @bp.route('/settings', methods=['GET'])
 @login_required

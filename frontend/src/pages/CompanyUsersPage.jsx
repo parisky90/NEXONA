@@ -1,7 +1,7 @@
 // frontend/src/pages/CompanyUsersPage.jsx
-import React, { useState, useEffect, useCallback } from 'react'; // ΔΙΟΡΘΩΘΗΚΕ ΑΥΤΗ Η ΓΡΑΜΜΗ
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../App'; 
-import { getCompanyUsers, createCompanyUser, toggleCompanyUserStatus } from '../services/companyAdminService';
+import { getCompanyUsers, createCompanyUser, toggleCompanyUserStatus, deleteCompanyUser } from '../services/companyAdminService'; // <<< ΠΡΟΣΘΗΚΗ deleteCompanyUser
 
 const ITEMS_PER_PAGE_COMPANY = 10;
 
@@ -27,23 +27,24 @@ function CompanyUsersPage() {
   const fetchCompanyUsersData = useCallback(async (page = 1) => {
     if (!currentUser || currentUser.role !== 'company_admin') {
       console.warn("CompanyUsersPage: fetchCompanyUsersData - Access denied or user not company admin. Current user:", currentUser);
-      setError("Access denied or user not a company admin.");
-      setIsLoading(false); // Σταμάτα το loading αν δεν υπάρχει πρόσβαση
+      setError("Access denied. You must be a Company Admin to view this page.");
+      setIsLoading(false);
+      setUsers([]); 
+      setTotalPages(0); 
+      setTotalUsers(0);
       return;
     }
     setIsLoading(true); setError('');
     try {
       const params = { page, per_page: ITEMS_PER_PAGE_COMPANY };
-      console.log("CompanyUsersPage: Fetching company users with params:", params);
       const data = await getCompanyUsers(params);
-      console.log("CompanyUsersPage: Users data fetched:", data);
       setUsers(data.users || []);
       setCurrentPage(data.current_page || 1);
       setTotalPages(data.total_pages || 0);
       setTotalUsers(data.total_users || 0);
     } catch (err) {
-      console.error("CompanyUsersPage: Error fetching company users:", err.response || err.message || err);
-      setError(err.error || err.message || 'Failed to load company users.');
+      console.error("CompanyUsersPage: Error fetching company users:", err.response?.data?.error || err.message || err);
+      setError(err.response?.data?.error || err.message || 'Failed to load company users.');
       setUsers([]); setTotalPages(0); setTotalUsers(0);
     } finally {
       setIsLoading(false);
@@ -52,17 +53,12 @@ function CompanyUsersPage() {
 
   useEffect(() => {
     if (currentUser && currentUser.role === 'company_admin') {
-        console.log("CompanyUsersPage: useEffect triggered for fetchCompanyUsersData. Current user role:", currentUser.role);
         fetchCompanyUsersData(1);
     } else if (currentUser) {
-        console.warn("CompanyUsersPage: useEffect - User is not company admin, not fetching users. Role:", currentUser.role);
-        // Αν δεν είναι company admin, δεν πρέπει να προσπαθεί να φορτώσει users εταιρείας.
-        // Αν είναι superadmin και θέλει να δει users εταιρείας, θα πρέπει να υπάρχει άλλη λογική/route.
-        // Για αυτή τη σελίδα, αν δεν είναι company_admin, απλά δεν φορτώνουμε.
-        setIsLoading(false); // Σταμάτα το loading
-        setUsers([]); // Άδειασε τους χρήστες
+        setIsLoading(false);
+        setUsers([]);
+        setError("Access Denied. You must be a Company Admin to view this page.");
     } else {
-      // Αν δεν υπάρχει currentUser, επίσης δεν φορτώνουμε
       setIsLoading(false);
     }
   }, [fetchCompanyUsersData, currentUser]);
@@ -88,8 +84,9 @@ function CompanyUsersPage() {
       setShowCreateForm(false);
       setNewUserFormData({ username: '', email: '', password: '', confirmPassword: '' });
       fetchCompanyUsersData(1); 
+      alert('User created successfully!');
     } catch (err) {
-      setCreateError(err.error || err.message || 'Failed to create user.');
+      setCreateError(err.response?.data?.error || err.message || 'Failed to create user.');
     } finally {
       setIsSubmitting(false);
     }
@@ -101,38 +98,70 @@ function CompanyUsersPage() {
     }
     const newStatus = !currentIsActive;
     if (window.confirm(`Are you sure you want to ${newStatus ? 'activate' : 'deactivate'} this user?`)) {
+      setIsLoading(true); // Για να δείχνει ότι κάτι γίνεται
       try {
         await toggleCompanyUserStatus(userId, newStatus);
         fetchCompanyUsersData(currentPage); 
+        alert(`User status updated to ${newStatus ? 'Active' : 'Inactive'}.`);
       } catch (err) {
-        alert(`Failed to update user status: ${err.error || err.message}`);
+        alert(`Failed to update user status: ${err.response?.data?.error || err.message}`);
+      } finally {
+        setIsLoading(false);
       }
     }
   };
 
-  const handlePageChange = (newPage) => {
-    if (newPage >= 1 && newPage <= totalPages) fetchCompanyUsersData(newPage);
-  };
+  // --- ΝΕΑ ΣΥΝΑΡΤΗΣΗ ΓΙΑ DELETE USER ---
+  const handleDeleteUser = async (userId, username) => {
+    if (currentUser && currentUser.id === userId) {
+        alert("You cannot delete yourself."); 
+        return;
+    }
+    // Πρόσθεσε έλεγχο για τον owner αν είναι εύκολο να τον πάρεις από το `currentUser` ή την εταιρεία
+    // if (currentUser?.company?.owner_user_id === userId) {
+    //    alert("You cannot delete the company owner.");
+    //    return;
+    // }
 
-  // Αυτός ο έλεγχος πρέπει να γίνει *πριν* το return, ώστε να μην προσπαθήσει να κάνει render
-  // τη σελίδα αν ο χρήστης δεν έχει δικαίωμα.
-  if (!isLoading && currentUser && currentUser.role !== 'company_admin') {
-    console.warn("CompanyUsersPage: Rendering Access Denied because user role is not 'company_admin'. Current role:", currentUser.role);
-    return <div className="card-style error-message">Access Denied. You must be a Company Admin to view this page.</div>;
-  }
-  if (isLoading && !currentUser) { // Πρόσθετος έλεγχος για την αρχική φόρτωση
+    if (window.confirm(`Are you sure you want to PERMANENTLY DELETE user '${username}' (ID: ${userId})? This action cannot be undone.`)) {
+        setIsLoading(true);
+        try {
+            await deleteCompanyUser(userId); // Κλήση της νέας service function
+            alert(`User '${username}' deleted successfully.`);
+            fetchCompanyUsersData(users.length === 1 && currentPage > 1 ? currentPage - 1 : currentPage); // Πήγαινε στην προηγούμενη σελίδα αν η τρέχουσα αδειάζει
+        } catch (err) {
+            console.error("Error deleting user:", err.response?.data || err.message);
+            alert(`Failed to delete user: ${err.response?.data?.error || err.message}`);
+        } finally {
+            setIsLoading(false);
+        }
+    }
+  };
+  // --- ΤΕΛΟΣ ΝΕΑΣ ΣΥΝΑΡΤΗΣΗΣ ---
+
+
+  const handlePageChange = (newPage) => {
+    if (newPage >= 1 && newPage <= totalPages && !isLoading) { // Πρόσθεσε έλεγχο !isLoading
+        fetchCompanyUsersData(newPage);
+    }
+  };
+  
+  if (!currentUser && isLoading) { 
     return <div className="loading-placeholder card-style">Loading user data...</div>;
+  }
+  if (currentUser && currentUser.role !== 'company_admin' && !isLoading) {
+    return <div className="card-style error-message">Access Denied. You must be a Company Admin to view this page.</div>;
   }
 
 
   return (
     <div className="admin-page-container card-style"> 
-      <h1>Manage Users for {currentUser?.company_name || 'Your Company'}</h1> {/* Προαιρετική αλυσίδα για currentUser */}
+      <h1>Manage Users for {currentUser?.company_name || 'Your Company'}</h1>
 
       <div className="add-user-section" style={{ marginBottom: '1.5rem', paddingBottom: '1.5rem', borderBottom: '1px solid var(--border-color)' }}>
         {!showCreateForm && (
           <button 
-            onClick={() => { setShowCreateForm(true); setCreateError(''); }} 
+            onClick={() => { setShowCreateForm(true); setCreateError(''); setNewUserFormData({ username: '', email: '', password: '', confirmPassword: '' });}} 
             className="button-action button-primary"
           >
             + Add New User
@@ -153,7 +182,7 @@ function CompanyUsersPage() {
                   <input type="email" id="email-company" name="email" value={newUserFormData.email} onChange={handleNewUserFormChange} required className="input-light-gray" autoComplete="off" />
                 </div>
                 <div className="form-group">
-                  <label htmlFor="password-company">Password:</label>
+                  <label htmlFor="password-company">Password (min 8 chars):</label>
                   <input type="password" id="password-company" name="password" value={newUserFormData.password} onChange={handleNewUserFormChange} required minLength="8" className="input-light-gray" autoComplete="new-password" />
                 </div>
                 <div className="form-group">
@@ -161,7 +190,7 @@ function CompanyUsersPage() {
                   <input type="password" id="confirmPassword-company" name="confirmPassword" value={newUserFormData.confirmPassword} onChange={handleNewUserFormChange} required minLength="8" className="input-light-gray" autoComplete="new-password" />
                 </div>
               </div>
-              {createError && <p className="error-message" style={{ marginTop: '1rem' }}>{createError}</p>}
+              {createError && <p className="error-message" style={{ marginTop: '1rem', color: 'red' }}>{createError}</p>}
               <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', justifyContent:'flex-end' }}>
                 <button type="button" onClick={() => {setShowCreateForm(false); setCreateError('');}} className="button-action button-secondary" disabled={isSubmitting}>
                   Cancel
@@ -175,16 +204,16 @@ function CompanyUsersPage() {
         )}
       </div>
 
-      {isLoading && <div className="loading-placeholder">Loading users...</div>}
-      {error && !isLoading && <p className="error-message">{error}</p>}
+      {isLoading && users.length === 0 && <div className="loading-placeholder">Loading users...</div>}
+      {error && !isLoading && <p className="error-message" style={{color: 'red'}}>{error}</p>}
       {!isLoading && !error && users.length === 0 && (
-        <p className="empty-list-message" style={{textAlign: 'center', marginTop: '1rem'}}>No users found in your company.</p>
+        <p className="empty-list-message" style={{textAlign: 'center', marginTop: '1rem'}}>No users found in your company. Click "+ Add New User" to create one.</p>
       )}
 
       {!isLoading && !error && users.length > 0 && (
         <>
           <div className="table-responsive">
-            <table className="candidate-table">
+            <table className="candidate-table"> {/* Ίσως θέλεις άλλο class name εδώ */}
               <thead>
                 <tr>
                   <th>ID</th>
@@ -192,7 +221,7 @@ function CompanyUsersPage() {
                   <th>Email</th>
                   <th>Active</th>
                   <th>Created At</th>
-                  <th>Actions</th>
+                  <th style={{textAlign: 'center'}}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -203,15 +232,26 @@ function CompanyUsersPage() {
                     <td>{user.email}</td>
                     <td>{user.is_active ? 'Yes' : 'No'}</td>
                     <td>{user.created_at ? new Date(user.created_at).toLocaleDateString() : 'N/A'}</td>
-                    <td>
+                    <td style={{textAlign: 'center'}}>
                       <button
                         onClick={() => handleToggleUserStatus(user.id, user.is_active)}
-                        className={`button-action ${user.is_active ? 'button-reject' : 'button-confirm'}`}
-                        disabled={currentUser?.id === user.id} // Προαιρετική αλυσίδα για currentUser
-                        title={currentUser?.id === user.id ? "Cannot change own status" : (user.is_active ? 'Deactivate' : 'Activate')}
+                        className={`button-action ${user.is_active ? 'button-warning' : 'button-confirm'}`} // Άλλαξα το class για deactivate
+                        disabled={currentUser?.id === user.id || isSubmitting || isLoading} 
+                        title={currentUser?.id === user.id ? "Cannot change own status" : (user.is_active ? 'Deactivate User' : 'Activate User')}
+                        style={{marginRight: '5px'}}
                       >
                         {user.is_active ? 'Deactivate' : 'Activate'}
                       </button>
+                      {/* --- ΝΕΟ ΚΟΥΜΠΙ DELETE --- */}
+                      <button
+                        onClick={() => handleDeleteUser(user.id, user.username)}
+                        className="button-action button-reject" // Χρησιμοποίησε το class για reject/delete
+                        disabled={currentUser?.id === user.id || isSubmitting || isLoading} // Δεν μπορείς να διαγράψεις τον εαυτό σου
+                        title={currentUser?.id === user.id ? "Cannot delete self" : `Delete user ${user.username}`}
+                      >
+                        Delete
+                      </button>
+                      {/* --- ΤΕΛΟΣ ΝΕΟΥ ΚΟΥΜΠΙΟΥ --- */}
                     </td>
                   </tr>
                 ))}

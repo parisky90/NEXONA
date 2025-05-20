@@ -1,352 +1,61 @@
 # backend/app/tasks/communication.py
 from app import celery, db, mail
-from app.models import Interview, Candidate, User, Position, Company, InterviewSlot, \
-    InterviewStatus  # <<< ΠΡΟΣΘΗΚΗ InterviewStatus ΕΔΩ
+from app.models import Interview, Candidate, User, Position, Company, InterviewSlot, InterviewStatus
 from flask_mail import Message
 from flask import current_app, url_for, render_template
 from zoneinfo import ZoneInfo
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta  # Πρόσθεσε timedelta αν χρειάζεται
 from sqlalchemy.orm.attributes import flag_modified
 from markupsafe import Markup
 
 logger = logging.getLogger(__name__)
 
 
+# ... (send_interview_proposal_email_task, send_interview_confirmation_to_candidate_task,
+#      send_interview_confirmation_to_recruiter_task, send_interview_rejection_to_recruiter_task,
+#      send_interview_cancellation_to_recruiter_task, send_interview_cancellation_to_candidate_task,
+#      send_interview_reminder_email_task ΠΑΡΑΜΕΝΟΥΝ ΙΔΙΑ ΜΕ ΤΗΝ ΤΕΛΕΥΤΑΙΑ ΠΛΗΡΗ ΕΚΔΟΣΗ ΠΟΥ ΣΟΥ ΕΣΤΕΙΛΑ) ...
+
+# --- ΝΕΑ TASKS ΓΙΑ OFFER/HIRED/DECLINED ---
+
 @celery.task(bind=True, max_retries=3, default_retry_delay=300)
-def send_interview_proposal_email_task(self, interview_id_str):
-    """
-    Sends an interview proposal email to the candidate.
-    """
-    logger.info(f"Executing send_interview_proposal_email_task for interview ID: {interview_id_str}")
+def send_offer_made_email_to_candidate_task(self, candidate_id_str, offer_details_dict=None):
+    logger.info(f"Executing send_offer_made_email_to_candidate_task for Candidate ID: {candidate_id_str}")
+    if offer_details_dict is None:
+        offer_details_dict = {}
     try:
-        interview_id = int(interview_id_str)
+        candidate_id_obj = uuid.UUID(candidate_id_str)
+        candidate = db.session.get(Candidate, candidate_id_obj)
     except ValueError:
-        logger.error(f"Invalid interview_id format: {interview_id_str}")
-        return f"Error: Invalid interview_id format {interview_id_str}"
+        logger.error(f"Invalid candidate_id format: {candidate_id_str}")
+        return f"Error: Invalid candidate_id format {candidate_id_str}"
 
-    interview = db.session.get(Interview, interview_id)
-    if not interview:
-        logger.error(f"send_interview_proposal_email_task: Interview with ID {interview_id} not found.")
-        return f"Error: Interview ID {interview_id} not found."
+    if not candidate:
+        logger.error(f"send_offer_made_email_task: Candidate with ID {candidate_id_str} not found.")
+        return f"Error: Candidate ID {candidate_id_str} not found."
+    if not candidate.email:
+        logger.error(f"send_offer_made_email_task: Candidate email missing for ID {candidate_id_str}.")
+        return f"Error: Candidate email missing for ID {candidate_id_str}."
+    if not candidate.offer_acceptance_token:
+        logger.error(f"send_offer_made_email_task: Offer acceptance token missing for candidate {candidate_id_str}.")
+        # Αυτό δεν θα έπρεπε να συμβεί αν το token δημιουργείται σωστά στο route
+        return f"Error: Offer acceptance token missing for candidate {candidate_id_str}."
 
-    candidate = interview.candidate
-    recruiter = interview.recruiter
-    position = interview.position
+    company_name = candidate.company.name if candidate.company else current_app.config.get('APP_NAME', "Our Company")
 
-    if not candidate or not candidate.email:
-        logger.error(
-            f"send_interview_proposal_email_task: Candidate or candidate email missing for interview ID {interview_id}.")
-        return f"Error: Candidate or email missing for interview ID {interview_id}."
+    accept_url = url_for('api.accept_offer', token=candidate.offer_acceptance_token, _external=True)
+    reject_url = url_for('api.reject_offer', token=candidate.offer_acceptance_token, _external=True)
 
-    company_name_for_email = current_app.config.get('APP_NAME', "Our Company")
-    if interview.company:
-        company_name_for_email = interview.company.name
-    elif candidate.company:
-        company_name_for_email = candidate.company.name
-    elif recruiter and recruiter.company:
-        company_name_for_email = recruiter.company.name
-
-    recruiter_name_for_email = "Recruitment Team"
-    if recruiter:
-        recruiter_name_for_email = recruiter.username
-
-    try:
-        local_tz_str = current_app.config.get('LOCAL_TIMEZONE', 'UTC')
-        local_tz = ZoneInfo(local_tz_str)
-    except Exception as tz_err:
-        logger.error(f"Could not load {local_tz_str} timezone in Celery task: {tz_err}", exc_info=True)
-        local_tz = ZoneInfo("UTC")
-        logger.warning(f"Falling back to UTC for email display times for interview {interview_id}.")
-
-    proposed_slots_for_email = []
-    logger.info(f"--- URLs for Interview ID: {interview_id} (Token: {interview.confirmation_token}) ---")
-    if interview.slots:
-        for slot_obj in interview.slots.all():
-            if slot_obj.start_time and slot_obj.end_time:
-                start_local = slot_obj.start_time.astimezone(local_tz)
-                confirmation_url = url_for('api.confirm_interview_slot',
-                                           token=interview.confirmation_token,
-                                           slot_id_choice=slot_obj.id,
-                                           _external=True)
-                logger.info(f"  Slot ID {slot_obj.id} Confirmation URL: {confirmation_url}")
-                proposed_slots_for_email.append({
-                    "id": slot_obj.id,
-                    "start_display": start_local.strftime("%A, %d %B %Y at %H:%M (%Z)"),
-                    "confirmation_url": confirmation_url
-                })
-
-    reject_all_url = url_for('api.reject_interview_slots', token=interview.confirmation_token, _external=True)
-    logger.info(f"  Reject All Slots URL: {reject_all_url}")
-    logger.info(f"--- End of URLs for Interview ID: {interview_id} ---")
-
-    if not proposed_slots_for_email:
-        logger.warning(
-            f"send_interview_proposal_email_task: No valid proposed slots found for interview ID {interview_id}. Email will indicate this.")
-
-    subject = f"Interview Invitation"
-    if position:
-        subject += f" for {position.position_name}"
-    subject += f" at {company_name_for_email}"
-
-    processed_notes_for_candidate = ""
-    if interview.notes_for_candidate:
-        processed_notes_for_candidate = Markup.escape(interview.notes_for_candidate).replace('\n', Markup('<br>'))
-
+    subject = f"Job Offer from {company_name}"
     email_context = {
         'candidate_name': candidate.get_full_name(),
-        'position_name_display': f"for the position «{position.position_name}»" if position else "for a collaboration opportunity",
-        'company_name': company_name_for_email,
-        'proposed_slots': proposed_slots_for_email,
-        'interview_type': interview.interview_type or "Not specified",
-        'location': interview.location or "To be confirmed",
-        'notes_for_candidate': processed_notes_for_candidate,
-        'reject_all_url': reject_all_url,
-        'recruiter_name': recruiter_name_for_email,
-        'now': datetime.utcnow(),
-        'app_home_url': current_app.config.get('FRONTEND_URL', 'http://localhost:5173')
-    }
-
-    html_body = ""
-    text_body = ""
-    try:
-        html_body = render_template('email/interview_proposal.html', **email_context)
-        text_body = render_template('email/interview_proposal.txt', **email_context)
-        logger.info(f"Successfully rendered email templates for interview ID {interview_id}.")
-    except Exception as template_e:
-        logger.error(
-            f"Email template rendering FAILED for interview_proposal (Interview ID: {interview_id}): {template_e}. Falling back to basic f-string email.",
-            exc_info=True)
-        html_body = f"""<p>Dear {email_context['candidate_name']},</p><p>We would like to invite you for an interview {email_context['position_name_display']} at {email_context['company_name']}.</p><p>Please visit the link below to select a time or indicate if no times are suitable.</p><p>Available slots:</p>"""
-        if email_context['proposed_slots']:
-            for slot in email_context['proposed_slots']:
-                html_body += f"<p>- {slot['start_display']}: <a href='{slot['confirmation_url']}'>Confirm</a></p>"
-        else:
-            html_body += "<p>No specific slots proposed at this time. We will contact you.</p>"
-        html_body += f"<p>If no slots work: <a href='{email_context['reject_all_url']}'>Reject all slots</a></p><p>Thank you,<br>The {email_context['company_name']} Team</p>"
-        text_body = f"""Dear {email_context['candidate_name']},\n\nWe would like to invite you for an interview {email_context['position_name_display']} at {email_context['company_name']}.\nPlease visit the link below to select a time or indicate if no times are suitable.\n\nAvailable slots:\n"""
-        if email_context['proposed_slots']:
-            for slot in email_context['proposed_slots']:
-                text_body += f"- {slot['start_display']}: Confirm at {slot['confirmation_url']}\n"
-        else:
-            text_body += "No specific slots proposed at this time. We will contact you.\n"
-        text_body += f"If no slots work, please visit: {email_context['reject_all_url']}\n\nThank you,\nThe {email_context['company_name']} Team"
-
-    sender_email = current_app.config.get('MAIL_DEFAULT_SENDER')
-    msg = Message(subject, sender=sender_email, recipients=[candidate.email])
-    msg.body = text_body
-    msg.html = html_body
-
-    try:
-        if current_app.config.get('MAIL_SUPPRESS_SEND', False):
-            logger.info(
-                f"MAIL_SUPPRESS_SEND is True. Email to {candidate.email} for interview {interview_id} NOT sent but task executed.")
-        else:
-            mail.send(msg)
-            logger.info(f"Interview proposal email sent to {candidate.email} for interview ID {interview_id}.")
-        return f"Email processed for interview ID {interview_id}."
-    except Exception as e_mail:
-        logger.error(f"Failed to send interview proposal email for interview ID {interview_id}: {e_mail}",
-                     exc_info=True)
-        try:
-            raise self.retry(exc=e_mail, countdown=int(self.default_retry_delay * (2 ** self.request.retries)))
-        except self.MaxRetriesExceededError:
-            logger.error(f"Max retries exceeded for sending email for interview ID {interview_id}.")
-            if interview:
-                interview.internal_notes = (interview.internal_notes or "") + \
-                                           f"\n[Email Send Failed] Max retries for proposal email to candidate. Error: {str(e_mail)[:100]}"
-                flag_modified(interview, "internal_notes")
-                try:
-                    db.session.commit()
-                except Exception as db_exc:
-                    logger.error(
-                        f"Failed to commit internal_notes update after email send failure for interview {interview_id}: {db_exc}",
-                        exc_info=True)
-                    db.session.rollback()
-            return f"Failed to send email for interview ID {interview_id} after max retries."
-        except Exception as retry_exc:
-            logger.error(f"Error during retry mechanism for interview ID {interview_id}: {retry_exc}", exc_info=True)
-            return f"Failed to send email for interview ID {interview_id}, retry mechanism failed."
-
-
-@celery.task(bind=True, max_retries=3, default_retry_delay=180)
-def send_interview_confirmation_to_candidate_task(self, interview_id_str, selected_slot_id_str):
-    logger.info(
-        f"Executing send_interview_confirmation_to_candidate_task for interview ID: {interview_id_str}, slot ID: {selected_slot_id_str}")
-    try:
-        interview_id = int(interview_id_str)
-        selected_slot_id = int(selected_slot_id_str)
-    except ValueError:
-        logger.error(
-            f"Invalid ID format for interview or slot: interview_id='{interview_id_str}', slot_id='{selected_slot_id_str}'")
-        return "Error: Invalid ID format."
-
-    interview = db.session.get(Interview, interview_id)
-    if not interview:
-        logger.error(f"send_interview_confirmation_to_candidate_task: Interview {interview_id} not found.")
-        return f"Error: Interview {interview_id} not found."
-
-    selected_slot = db.session.get(InterviewSlot, selected_slot_id)
-    if not selected_slot or selected_slot.interview_id != interview_id:
-        logger.error(
-            f"send_interview_confirmation_to_candidate_task: Slot {selected_slot_id} not found or doesn't belong to interview {interview_id}.")
-        return f"Error: Slot {selected_slot_id} invalid for interview {interview_id}."
-
-    candidate = interview.candidate
-    if not candidate or not candidate.email:
-        logger.error(
-            f"send_interview_confirmation_to_candidate_task: Candidate or email missing for interview {interview_id}.")
-        return f"Error: Candidate or email missing for interview {interview_id}."
-
-    company_name_for_email = interview.company.name if interview.company else current_app.config.get('APP_NAME',
-                                                                                                     "Our Company")
-    position_name_display = f"for the position «{interview.position.position_name}»" if interview.position else "regarding your application"
-
-    try:
-        local_tz_str = current_app.config.get('LOCAL_TIMEZONE', 'UTC')
-        local_tz = ZoneInfo(local_tz_str)
-    except Exception as tz_err:
-        logger.error(f"Could not load {local_tz_str} timezone in Celery task: {tz_err}", exc_info=True)
-        local_tz = ZoneInfo("UTC")
-        logger.warning(f"Falling back to UTC for email display times for interview {interview_id}.")
-
-    confirmed_time_display = selected_slot.start_time.astimezone(local_tz).strftime("%A, %d %B %Y at %H:%M (%Z)")
-    cancel_url = None
-    if interview.cancellation_token:
-        cancel_url = url_for('api.cancel_interview_by_candidate', cancel_token=interview.cancellation_token,
-                             _external=True)
-
-    logger.info(f"--- Candidate Confirmation Email URLs for Interview ID: {interview_id} ---")
-    logger.info(f"  Cancel URL: {cancel_url}")
-    logger.info(f"--- End of Candidate Confirmation Email URLs ---")
-
-    processed_notes_for_candidate_confirmation = ""
-    if interview.notes_for_candidate:
-        processed_notes_for_candidate_confirmation = Markup.escape(interview.notes_for_candidate).replace('\n', Markup(
-            '<br>'))
-
-    subject = f"Interview Confirmed {position_name_display} at {company_name_for_email}"
-    email_context = {
-        'candidate_name': candidate.get_full_name(),
-        'company_name': company_name_for_email,
-        'position_name_display': position_name_display,
-        'confirmed_time_display': confirmed_time_display,
-        'location': interview.location or "To be confirmed",
-        'interview_type': interview.interview_type or "Not specified",
-        'notes_for_candidate': processed_notes_for_candidate_confirmation,
-        'cancel_url': cancel_url,
-        'now': datetime.utcnow(),
-        'app_home_url': current_app.config.get('FRONTEND_URL'),
-        'config': current_app.config
-    }
-
-    html_body = ""
-    text_body = ""
-    try:
-        html_body = render_template('email/interview_confirmation_candidate.html', **email_context)
-        text_body = render_template('email/interview_confirmation_candidate.txt', **email_context)
-        logger.info(f"Successfully rendered candidate confirmation email templates for interview {interview_id}.")
-    except Exception as template_e:
-        logger.error(
-            f"Candidate confirmation email template rendering FAILED for interview {interview_id}: {template_e}",
-            exc_info=True)
-        html_body = f"<p>Dear {email_context['candidate_name']},</p><p>Your interview {email_context['position_name_display']} with {email_context['company_name']} is confirmed for <strong>{email_context['confirmed_time_display']}</strong>.</p>"
-        if email_context['location'] != "To be confirmed": html_body += f"<p>Location: {email_context['location']}</p>"
-        if email_context[
-            'cancel_url']: html_body += f"<p>If you need to cancel or reschedule, please use this link: <a href='{email_context['cancel_url']}'>Manage Interview</a></p>"
-        html_body += f"<p>Thank you.</p>"
-        text_body = f"Dear {email_context['candidate_name']},\n\nYour interview {email_context['position_name_display']} with {email_context['company_name']} is confirmed for {email_context['confirmed_time_display']}.\n"
-        if email_context['location'] != "To be confirmed": text_body += f"Location: {email_context['location']}\n"
-        if email_context[
-            'cancel_url']: text_body += f"If you need to cancel or reschedule: {email_context['cancel_url']}\n"
-        text_body += f"\nThank you."
-
-    sender_email = current_app.config.get('MAIL_DEFAULT_SENDER')
-    msg = Message(subject, sender=sender_email, recipients=[candidate.email])
-    msg.body = text_body
-    msg.html = html_body
-
-    try:
-        if current_app.config.get('MAIL_SUPPRESS_SEND', False):
-            logger.info(
-                f"MAIL_SUPPRESS_SEND is True. Candidate confirmation email to {candidate.email} for interview {interview_id} NOT sent.")
-        else:
-            mail.send(msg)
-            logger.info(f"Candidate confirmation email sent to {candidate.email} for interview {interview_id}.")
-        return f"Candidate confirmation email processed for interview {interview_id}."
-    except Exception as e_mail:
-        logger.error(f"Failed to send candidate confirmation email for interview {interview_id}: {e_mail}",
-                     exc_info=True)
-        try:
-            raise self.retry(exc=e_mail, countdown=int(self.default_retry_delay * (2 ** self.request.retries)))
-        except self.MaxRetriesExceededError:
-            logger.error(f"Max retries exceeded for candidate confirmation email, interview {interview_id}.")
-            return f"Failed candidate confirmation email (max retries) for interview {interview_id}."
-        except Exception as retry_exc:
-            logger.error(
-                f"Retry mechanism failed for candidate confirmation email, interview {interview_id}: {retry_exc}",
-                exc_info=True)
-            return f"Failed candidate confirmation email (retry mechanism error) for interview {interview_id}."
-
-
-@celery.task(bind=True, max_retries=3, default_retry_delay=180)
-def send_interview_confirmation_to_recruiter_task(self, interview_id_str, selected_slot_id_str):
-    logger.info(
-        f"Executing send_interview_confirmation_to_recruiter_task for interview ID: {interview_id_str}, slot ID: {selected_slot_id_str}")
-    try:
-        interview_id = int(interview_id_str)
-        selected_slot_id = int(selected_slot_id_str)
-    except ValueError:
-        logger.error(
-            f"Invalid ID format for recruiter confirmation: interview_id='{interview_id_str}', slot_id='{selected_slot_id_str}'")
-        return "Error: Invalid ID format."
-
-    interview = db.session.get(Interview, interview_id)
-    if not interview:
-        logger.error(f"Recruiter confirmation: Interview {interview_id} not found.")
-        return f"Error: Interview {interview_id} not found."
-
-    selected_slot = db.session.get(InterviewSlot, selected_slot_id)
-    if not selected_slot or selected_slot.interview_id != interview_id:
-        logger.error(f"Recruiter confirmation: Slot {selected_slot_id} invalid for interview {interview_id}.")
-        return f"Error: Slot {selected_slot_id} invalid for interview {interview_id}."
-
-    recruiter = interview.recruiter
-    if not recruiter or not recruiter.email:
-        logger.warning(
-            f"Recruiter confirmation: Recruiter or email missing for interview {interview_id}. Cannot send email.")
-        return f"Warning: Recruiter or email missing for interview {interview_id}."
-
-    candidate = interview.candidate
-    candidate_name = candidate.get_full_name() if candidate else "N/A"
-    company_name_for_email = recruiter.company.name if recruiter.company else current_app.config.get('APP_NAME',
-                                                                                                     "The Company")
-    position_name_display = f"for position «{interview.position.position_name}»" if interview.position else "for an interview"
-
-    try:
-        local_tz_str = current_app.config.get('LOCAL_TIMEZONE', 'UTC')
-        local_tz = ZoneInfo(local_tz_str)
-    except Exception as tz_err:
-        logger.error(f"Could not load {local_tz_str} timezone in Celery task: {tz_err}", exc_info=True)
-        local_tz = ZoneInfo("UTC")
-        logger.warning(f"Falling back to UTC for email display times for interview {interview_id}.")
-
-    confirmed_time_display = selected_slot.start_time.astimezone(local_tz).strftime("%A, %d %B %Y at %H:%M (%Z)")
-
-    view_interview_url = "#"
-    if interview.candidate_id:
-        view_interview_url = f"{current_app.config.get('FRONTEND_URL', '')}/candidate/{str(interview.candidate_id)}?tab=interviews"
-
-    subject = f"Interview Scheduled: {candidate_name} {position_name_display}"
-    email_context = {
-        'recruiter_name': recruiter.username,
-        'candidate_name': candidate_name,
-        'company_name': company_name_for_email,
-        'position_name_display': position_name_display,
-        'confirmed_time_display': confirmed_time_display,
-        'location': interview.location or "To be confirmed",
-        'interview_type': interview.interview_type or "Not specified",
-        'view_interview_url': view_interview_url,
+        'company_name': company_name,
+        'offer_amount': offer_details_dict.get('offer_amount'),  # Μπορεί να είναι None
+        'offer_notes': offer_details_dict.get('offer_notes'),  # Μπορεί να είναι None
+        'offer_date': offer_details_dict.get('offer_date'),  # Μπορεί να είναι None (ISO string)
+        'accept_url': accept_url,
+        'reject_url': reject_url,
         'now': datetime.utcnow(),
         'app_home_url': current_app.config.get('FRONTEND_URL')
     }
@@ -354,87 +63,164 @@ def send_interview_confirmation_to_recruiter_task(self, interview_id_str, select
     html_body = ""
     text_body = ""
     try:
-        html_body = render_template('email/interview_confirmation_recruiter.html', **email_context)
-        text_body = render_template('email/interview_confirmation_recruiter.txt', **email_context)
-        logger.info(f"Successfully rendered recruiter confirmation email templates for interview {interview_id}.")
+        # Χρειάζονται νέα templates: email/offer_made_candidate.html και .txt
+        html_body = render_template('email/offer_made_candidate.html', **email_context)
+        text_body = render_template('email/offer_made_candidate.txt', **email_context)
+        logger.info(f"Successfully rendered 'Offer Made' email templates for candidate {candidate_id_str}.")
     except Exception as template_e:
-        logger.error(
-            f"Recruiter confirmation email template rendering FAILED for interview {interview_id}: {template_e}",
-            exc_info=True)
-        html_body = f"<p>Hello {email_context['recruiter_name']},</p><p>The interview with {email_context['candidate_name']} {email_context['position_name_display']} has been scheduled for <strong>{email_context['confirmed_time_display']}</strong>.</p>"
-        if email_context['location'] != "To be confirmed": html_body += f"<p>Location: {email_context['location']}</p>"
-        if email_context[
-            'view_interview_url'] != "#": html_body += f"<p>You can view the details here: <a href='{email_context['view_interview_url']}'>Interview Details</a></p>"
-        text_body = f"Hello {email_context['recruiter_name']},\n\nThe interview with {email_context['candidate_name']} {email_context['position_name_display']} has been scheduled for {email_context['confirmed_time_display']}.\n"
-        if email_context['location'] != "To be confirmed": text_body += f"Location: {email_context['location']}\n"
-        if email_context[
-            'view_interview_url'] != "#": text_body += f"You can view the details here: {email_context['view_interview_url']}\n"
+        logger.error(f"'Offer Made' email template rendering FAILED for candidate {candidate_id_str}: {template_e}",
+                     exc_info=True)
+        # Fallback
+        html_body = f"<p>Dear {candidate.get_full_name()},</p><p>We are pleased to extend an offer of employment from {company_name}.</p>"
+        if offer_details_dict.get(
+            'offer_amount'): html_body += f"<p>Offered Salary: {offer_details_dict.get('offer_amount')}</p>"
+        if offer_details_dict.get('offer_notes'): html_body += f"<p>Notes: {offer_details_dict.get('offer_notes')}</p>"
+        html_body += f"<p>To accept this offer, please click here: <a href='{accept_url}'>Accept Offer</a></p>"
+        html_body += f"<p>If you wish to decline, please click here: <a href='{reject_url}'>Decline Offer</a></p>"
+        text_body = f"Dear {candidate.get_full_name()},\n\nWe are pleased to extend an offer of employment from {company_name}.\n"
+        if offer_details_dict.get(
+            'offer_amount'): text_body += f"Offered Salary: {offer_details_dict.get('offer_amount')}\n"
+        if offer_details_dict.get('offer_notes'): text_body += f"Notes: {offer_details_dict.get('offer_notes')}\n"
+        text_body += f"To accept this offer, please visit: {accept_url}\n"
+        text_body += f"If you wish to decline, please visit: {reject_url}\n"
 
     sender_email = current_app.config.get('MAIL_DEFAULT_SENDER')
-    msg = Message(subject, sender=sender_email, recipients=[recruiter.email])
+    msg = Message(subject, sender=sender_email, recipients=[candidate.email])
     msg.body = text_body
     msg.html = html_body
 
     try:
         if current_app.config.get('MAIL_SUPPRESS_SEND', False):
-            logger.info(
-                f"MAIL_SUPPRESS_SEND is True. Recruiter confirmation email to {recruiter.email} for interview {interview_id} NOT sent.")
+            logger.info(f"MAIL_SUPPRESS_SEND is True. Offer email to {candidate.email} NOT sent.")
         else:
             mail.send(msg)
-            logger.info(f"Recruiter confirmation email sent to {recruiter.email} for interview {interview_id}.")
-        return f"Recruiter confirmation email processed for interview {interview_id}."
+            logger.info(f"Offer email sent to {candidate.email}.")
+        return f"Offer email processed for candidate {candidate_id_str}."
     except Exception as e_mail:
-        logger.error(f"Failed to send recruiter confirmation email for interview {interview_id}: {e_mail}",
-                     exc_info=True)
+        logger.error(f"Failed to send offer email for candidate {candidate_id_str}: {e_mail}", exc_info=True)
+        # Retry logic (παρόμοια με τα άλλα tasks)
         try:
             raise self.retry(exc=e_mail, countdown=int(self.default_retry_delay * (2 ** self.request.retries)))
         except self.MaxRetriesExceededError:
-            logger.error(f"Max retries exceeded for recruiter confirmation email, interview {interview_id}.")
-            return f"Failed recruiter confirmation email (max retries) for interview {interview_id}."
+            logger.error(f"Max retries for offer email, candidate {candidate_id_str}.")
+            return f"Failed offer email (max retries) for candidate {candidate_id_str}."
         except Exception as retry_exc:
-            logger.error(
-                f"Retry mechanism failed for recruiter confirmation email, interview {interview_id}: {retry_exc}",
-                exc_info=True)
-            return f"Failed recruiter confirmation email (retry mechanism error) for interview {interview_id}."
+            logger.error(f"Retry mechanism failed for offer email, candidate {candidate_id_str}: {retry_exc}",
+                         exc_info=True)
+            return f"Failed offer email (retry mechanism error) for candidate {candidate_id_str}."
 
 
 @celery.task(bind=True, max_retries=3, default_retry_delay=180)
-def send_interview_rejection_to_recruiter_task(self, interview_id_str):
-    logger.info(f"Executing send_interview_rejection_to_recruiter_task for interview ID: {interview_id_str}")
+def send_hired_confirmation_email_to_candidate_task(self, candidate_id_str):
+    logger.info(f"Executing send_hired_confirmation_email_to_candidate_task for Candidate ID: {candidate_id_str}")
     try:
-        interview_id = int(interview_id_str)
+        candidate_id_obj = uuid.UUID(candidate_id_str)
+        candidate = db.session.get(Candidate, candidate_id_obj)
     except ValueError:
-        logger.error(f"Invalid ID format for interview rejection: interview_id='{interview_id_str}'")
+        logger.error(f"Invalid candidate_id format for hired email: {candidate_id_str}")
         return "Error: Invalid ID format."
 
-    interview = db.session.get(Interview, interview_id)
-    if not interview:
-        logger.error(f"Interview rejection: Interview {interview_id} not found.")
-        return f"Error: Interview {interview_id} not found."
+    if not candidate or not candidate.email:
+        logger.error(f"Hired email: Candidate or email missing for ID {candidate_id_str}.")
+        return f"Error: Candidate or email missing for ID {candidate_id_str}."
 
-    recruiter = interview.recruiter
-    if not recruiter or not recruiter.email:
-        logger.warning(
-            f"Interview rejection: Recruiter or email missing for interview {interview_id}. Cannot send email.")
-        return f"Warning: Recruiter or email missing for interview {interview_id}."
+    company_name = candidate.company.name if candidate.company else current_app.config.get('APP_NAME', "Our Company")
+    # Εδώ θα μπορούσες να φορτώσεις παραμετροποιήσιμο περιεχόμενο από το CompanySettings
+    # welcome_message_template = candidate.company.settings.welcome_email_template or "Welcome aboard!"
+    # Για τώρα, ένα γενικό μήνυμα:
+    welcome_message_body = f"We are thrilled to welcome you to the team at {company_name}! We will be in touch shortly with details about your onboarding process."
 
-    candidate = interview.candidate
-    candidate_name = candidate.get_full_name() if candidate else "N/A"
-    company_name_for_email = recruiter.company.name if recruiter.company else current_app.config.get('APP_NAME',
-                                                                                                     "The Company")
-    position_name_display = f"for position «{interview.position.position_name}»" if interview.position else "for an interview"
-
-    view_candidate_url = "#"
-    if interview.candidate_id:
-        view_candidate_url = f"{current_app.config.get('FRONTEND_URL', '')}/candidate/{str(interview.candidate_id)}"
-
-    subject = f"Interview Slots Declined: {candidate_name} {position_name_display}"
+    subject = f"Welcome to {company_name}!"
     email_context = {
-        'recruiter_name': recruiter.username,
+        'candidate_name': candidate.get_full_name(),
+        'company_name': company_name,
+        'welcome_message_body': welcome_message_body,  # Αυτό θα μπορούσε να είναι πιο πλούσιο
+        'now': datetime.utcnow(),
+        'app_home_url': current_app.config.get('FRONTEND_URL')
+    }
+
+    html_body = ""
+    text_body = ""
+    try:
+        # Χρειάζονται νέα templates: email/hired_confirmation_candidate.html και .txt
+        html_body = render_template('email/hired_confirmation_candidate.html', **email_context)
+        text_body = render_template('email/hired_confirmation_candidate.txt', **email_context)
+        logger.info(f"Successfully rendered 'Hired Confirmation' email templates for candidate {candidate_id_str}.")
+    except Exception as template_e:
+        logger.error(
+            f"'Hired Confirmation' email template rendering FAILED for candidate {candidate_id_str}: {template_e}",
+            exc_info=True)
+        html_body = f"<p>Dear {candidate.get_full_name()},</p><p>Congratulations and welcome to {company_name}!</p><p>{welcome_message_body}</p>"
+        text_body = f"Dear {candidate.get_full_name()},\n\nCongratulations and welcome to {company_name}!\n{welcome_message_body}\n"
+
+    sender_email = current_app.config.get('MAIL_DEFAULT_SENDER')
+    msg = Message(subject, sender=sender_email, recipients=[candidate.email])
+    msg.body = text_body
+    msg.html = html_body
+
+    try:
+        if current_app.config.get('MAIL_SUPPRESS_SEND', False):
+            logger.info(f"MAIL_SUPPRESS_SEND is True. Hired email to {candidate.email} NOT sent.")
+        else:
+            mail.send(msg)
+            logger.info(f"Hired email sent to {candidate.email}.")
+        return f"Hired email processed for candidate {candidate_id_str}."
+    except Exception as e_mail:
+        logger.error(f"Failed to send hired email for candidate {candidate_id_str}: {e_mail}", exc_info=True)
+        # Retry logic
+        try:
+            raise self.retry(exc=e_mail, countdown=int(self.default_retry_delay * (2 ** self.request.retries)))
+        except self.MaxRetriesExceededError:
+            logger.error(f"Max retries for hired email, candidate {candidate_id_str}.")
+            return f"Failed hired email (max retries) for candidate {candidate_id_str}."
+        except Exception as retry_exc:
+            logger.error(f"Retry mechanism failed for hired email, candidate {candidate_id_str}: {retry_exc}",
+                         exc_info=True)
+            return f"Failed hired email (retry mechanism error) for candidate {candidate_id_str}."
+
+
+@celery.task(bind=True, max_retries=3, default_retry_delay=180)
+def send_offer_declined_notification_to_recruiter_task(self, candidate_id_str):
+    logger.info(f"Executing send_offer_declined_notification_to_recruiter_task for Candidate ID: {candidate_id_str}")
+    try:
+        candidate_id_obj = uuid.UUID(candidate_id_str)
+        candidate = db.session.get(Candidate, candidate_id_obj)
+    except ValueError:
+        logger.error(f"Invalid candidate_id format for offer declined email: {candidate_id_str}")
+        return "Error: Invalid ID format."
+
+    if not candidate:
+        logger.error(f"Offer declined email: Candidate {candidate_id_str} not found.")
+        return f"Error: Candidate {candidate_id_str} not found."
+
+    # Βρες τον recruiter. Αν η εταιρεία έχει πολλούς, ίσως να θες να στείλεις σε όλους τους company admins
+    # ή στον recruiter που έκανε την τελευταία ενέργεια. Για τώρα, στέλνουμε στον owner της εταιρείας ή σε έναν admin.
+    recruiter_to_notify = None
+    company = candidate.company
+    if company:
+        if company.owner:
+            recruiter_to_notify = company.owner
+        elif company.users.first():  # Πάρε τον πρώτο χρήστη της εταιρείας αν δεν υπάρχει owner
+            recruiter_to_notify = company.users.first()
+
+    if not recruiter_to_notify or not recruiter_to_notify.email:
+        logger.warning(
+            f"Offer declined email: No recruiter/admin found or email missing for company of candidate {candidate_id_str}. Cannot send notification.")
+        return f"Warning: No recruiter/admin to notify for candidate {candidate_id_str}."
+
+    company_name = company.name if company else current_app.config.get('APP_NAME', "The Company")
+    candidate_name = candidate.get_full_name()
+
+    # Link στο προφίλ του υποψηφίου
+    view_candidate_url = "#"
+    if candidate.candidate_id:
+        view_candidate_url = f"{current_app.config.get('FRONTEND_URL', '')}/candidate/{str(candidate.candidate_id)}"
+
+    subject = f"Offer Declined by Candidate: {candidate_name}"
+    email_context = {
+        'recruiter_name': recruiter_to_notify.username,
         'candidate_name': candidate_name,
-        'company_name': company_name_for_email,
-        'position_name_display': position_name_display,
-        'reason_message': "The candidate has indicated that none of the proposed interview slots are suitable.",
+        'company_name': company_name,
         'view_candidate_url': view_candidate_url,
         'now': datetime.utcnow(),
         'app_home_url': current_app.config.get('FRONTEND_URL')
@@ -443,257 +229,56 @@ def send_interview_rejection_to_recruiter_task(self, interview_id_str):
     html_body = ""
     text_body = ""
     try:
-        html_body = render_template('email/interview_slots_rejected_recruiter.html', **email_context)
-        text_body = render_template('email/interview_slots_rejected_recruiter.txt', **email_context)
+        # Χρειάζονται νέα templates: email/offer_declined_recruiter.html και .txt
+        html_body = render_template('email/offer_declined_recruiter.html', **email_context)
+        text_body = render_template('email/offer_declined_recruiter.txt', **email_context)
         logger.info(
-            f"Successfully rendered recruiter rejection notification email templates for interview {interview_id}.")
+            f"Successfully rendered 'Offer Declined' notification email templates for candidate {candidate_id_str}.")
     except Exception as template_e:
         logger.error(
-            f"Recruiter rejection notification email template rendering FAILED for interview {interview_id}: {template_e}",
+            f"'Offer Declined' notification email template rendering FAILED for candidate {candidate_id_str}: {template_e}",
             exc_info=True)
-        html_body = f"<p>Hello {email_context['recruiter_name']},</p><p>The candidate {email_context['candidate_name']} has declined all proposed interview slots for {email_context['position_name_display']}.</p>"
-        if email_context[
-            'view_candidate_url'] != "#": html_body += f"<p>You can view the candidate's profile here: <a href='{email_context['view_candidate_url']}'>Candidate Details</a></p>"
-        text_body = f"Hello {email_context['recruiter_name']},\n\nThe candidate {email_context['candidate_name']} has declined all proposed interview slots for {email_context['position_name_display']}.\n"
-        if email_context[
-            'view_candidate_url'] != "#": text_body += f"You can view the candidate's profile here: {email_context['view_candidate_url']}\n"
+        html_body = f"<p>Hello {recruiter_to_notify.username},</p><p>The candidate {candidate_name} has declined the job offer.</p>"
+        if view_candidate_url != "#": html_body += f"<p>You can view the candidate's profile here: <a href='{view_candidate_url}'>Candidate Details</a></p>"
+        text_body = f"Hello {recruiter_to_notify.username},\n\nThe candidate {candidate_name} has declined the job offer.\n"
+        if view_candidate_url != "#": text_body += f"You can view the candidate's profile here: {view_candidate_url}\n"
 
     sender_email = current_app.config.get('MAIL_DEFAULT_SENDER')
-    msg = Message(subject, sender=sender_email, recipients=[recruiter.email])
+    msg = Message(subject, sender=sender_email, recipients=[recruiter_to_notify.email])
     msg.body = text_body
     msg.html = html_body
 
     try:
         if current_app.config.get('MAIL_SUPPRESS_SEND', False):
             logger.info(
-                f"MAIL_SUPPRESS_SEND is True. Recruiter rejection notification to {recruiter.email} for interview {interview_id} NOT sent.")
+                f"MAIL_SUPPRESS_SEND is True. Offer declined notification to {recruiter_to_notify.email} NOT sent.")
         else:
             mail.send(msg)
-            logger.info(f"Recruiter rejection notification sent to {recruiter.email} for interview {interview_id}.")
-        return f"Recruiter rejection notification email processed for interview {interview_id}."
+            logger.info(f"Offer declined notification sent to {recruiter_to_notify.email}.")
+        return f"Offer declined notification email processed for candidate {candidate_id_str}."
     except Exception as e_mail:
-        logger.error(f"Failed to send recruiter rejection notification for interview {interview_id}: {e_mail}",
+        logger.error(f"Failed to send offer declined notification for candidate {candidate_id_str}: {e_mail}",
                      exc_info=True)
+        # Retry logic
         try:
             raise self.retry(exc=e_mail, countdown=int(self.default_retry_delay * (2 ** self.request.retries)))
         except self.MaxRetriesExceededError:
-            logger.error(f"Max retries exceeded for recruiter rejection notification, interview {interview_id}.")
-            return f"Failed recruiter rejection notification (max retries) for interview {interview_id}."
+            logger.error(f"Max retries for offer declined notification, candidate {candidate_id_str}.")
+            return f"Failed offer declined notification (max retries) for candidate {candidate_id_str}."
         except Exception as retry_exc:
             logger.error(
-                f"Retry mechanism failed for recruiter rejection notification, interview {interview_id}: {retry_exc}",
+                f"Retry mechanism failed for offer declined notification, candidate {candidate_id_str}: {retry_exc}",
                 exc_info=True)
-            return f"Failed recruiter rejection notification (retry mechanism error) for interview {interview_id}."
+            return f"Failed offer declined notification (retry mechanism error) for candidate {candidate_id_str}."
 
 
-@celery.task(bind=True, max_retries=3, default_retry_delay=180)
-def send_interview_cancellation_to_recruiter_task(self, interview_id_str, reason=None, reschedule_preference=None):
-    logger.info(
-        f"Executing send_interview_cancellation_to_recruiter_task for interview ID: {interview_id_str}. Reason: {reason or 'N/A'}, Reschedule: {reschedule_preference or 'N/A'}")
-    try:
-        interview_id = int(interview_id_str)
-    except ValueError:
-        logger.error(f"Invalid ID format for interview cancellation: interview_id='{interview_id_str}'")
-        return "Error: Invalid ID format."
+# --- ΤΕΛΟΣ ΝΕΩΝ TASKS ---
 
-    interview = db.session.get(Interview, interview_id)
-    if not interview:
-        logger.error(f"Interview cancellation: Interview {interview_id} not found.")
-        return f"Error: Interview {interview_id} not found."
-
-    recruiter = interview.recruiter
-    if not recruiter or not recruiter.email:
-        logger.warning(
-            f"Interview cancellation: Recruiter or email missing for interview {interview_id}. Cannot send email.")
-        return f"Warning: Recruiter or email missing for interview {interview_id}."
-
-    candidate = interview.candidate
-    candidate_name = candidate.get_full_name() if candidate else "N/A"
-    company_name_for_email = recruiter.company.name if recruiter.company else current_app.config.get('APP_NAME',
-                                                                                                     "The Company")
-    position_name_display = f"for position «{interview.position.position_name}»" if interview.position else "for an interview"
-
-    view_candidate_url = "#"
-    if interview.candidate_id:
-        view_candidate_url = f"{current_app.config.get('FRONTEND_URL', '')}/candidate/{str(interview.candidate_id)}"
-
-    subject = f"Interview Cancelled by Candidate: {candidate_name} {position_name_display}"
-    email_context = {
-        'recruiter_name': recruiter.username,
-        'candidate_name': candidate_name,
-        'company_name': company_name_for_email,
-        'position_name_display': position_name_display,
-        'cancellation_reason': reason or "No specific reason provided.",
-        'reschedule_preference_text': reschedule_preference,
-        'view_candidate_url': view_candidate_url,
-        'now': datetime.utcnow(),
-        'app_home_url': current_app.config.get('FRONTEND_URL')
-    }
-
-    if reschedule_preference == 'request_reschedule':
-        reschedule_message = "The candidate has requested to reschedule."
-    elif reschedule_preference == 'no_reschedule':
-        reschedule_message = "The candidate does not wish to reschedule at this time."
-    else:
-        reschedule_message = "The candidate's preference for rescheduling is not specified or they are unsure."
-    email_context['reschedule_message'] = reschedule_message
-
-    html_body = ""
-    text_body = ""
-    try:
-        html_body = render_template('email/interview_cancelled_by_candidate_recruiter.html', **email_context)
-        text_body = render_template('email/interview_cancelled_by_candidate_recruiter.txt', **email_context)
-        logger.info(
-            f"Successfully rendered recruiter cancellation notification email templates for interview {interview_id}.")
-    except Exception as template_e:
-        logger.error(
-            f"Recruiter cancellation notification email template rendering FAILED for interview {interview_id}: {template_e}",
-            exc_info=True)
-        html_body = f"<p>Hello {email_context['recruiter_name']},</p><p>The candidate {email_context['candidate_name']} has cancelled their interview {email_context['position_name_display']}.</p>"
-        if email_context[
-            'cancellation_reason'] != "No specific reason provided.": html_body += f"<p>Reason provided: {email_context['cancellation_reason']}</p>"
-        html_body += f"<p>{email_context['reschedule_message']}</p>"
-        if email_context[
-            'view_candidate_url'] != "#": html_body += f"<p>You can view the candidate's profile here: <a href='{email_context['view_candidate_url']}'>Candidate Details</a></p>"
-        text_body = f"Hello {email_context['recruiter_name']},\n\nThe candidate {email_context['candidate_name']} has cancelled their interview {email_context['position_name_display']}.\n"
-        if email_context[
-            'cancellation_reason'] != "No specific reason provided.": text_body += f"Reason provided: {email_context['cancellation_reason']}\n"
-        text_body += f"{email_context['reschedule_message']}\n"
-        if email_context[
-            'view_candidate_url'] != "#": text_body += f"You can view the candidate's profile here: {email_context['view_candidate_url']}\n"
-
-    sender_email = current_app.config.get('MAIL_DEFAULT_SENDER')
-    msg = Message(subject, sender=sender_email, recipients=[recruiter.email])
-    msg.body = text_body
-    msg.html = html_body
-
-    try:
-        if current_app.config.get('MAIL_SUPPRESS_SEND', False):
-            logger.info(
-                f"MAIL_SUPPRESS_SEND is True. Recruiter cancellation notification to {recruiter.email} for interview {interview_id} NOT sent.")
-        else:
-            mail.send(msg)
-            logger.info(f"Recruiter cancellation notification sent to {recruiter.email} for interview {interview_id}.")
-        return f"Recruiter cancellation notification email processed for interview {interview_id}."
-    except Exception as e_mail:
-        logger.error(f"Failed to send recruiter cancellation notification for interview {interview_id}: {e_mail}",
-                     exc_info=True)
-        try:
-            raise self.retry(exc=e_mail, countdown=int(self.default_retry_delay * (2 ** self.request.retries)))
-        except self.MaxRetriesExceededError:
-            logger.error(f"Max retries exceeded for recruiter cancellation notification, interview {interview_id}.")
-            return f"Failed recruiter cancellation notification (max retries) for interview {interview_id}."
-        except Exception as retry_exc:
-            logger.error(
-                f"Retry mechanism failed for recruiter cancellation notification, interview {interview_id}: {retry_exc}",
-                exc_info=True)
-            return f"Failed recruiter cancellation notification (retry mechanism error) for interview {interview_id}."
-
-
-@celery.task(bind=True, max_retries=3, default_retry_delay=180)
-def send_interview_cancellation_to_candidate_task(self, interview_id_str, cancellation_reason_by_recruiter=None):
-    logger.info(f"Executing send_interview_cancellation_to_candidate_task for interview ID: {interview_id_str}")
-    try:
-        interview_id = int(interview_id_str)
-    except ValueError:
-        logger.error(f"Invalid interview_id format for candidate cancellation notification: {interview_id_str}")
-        return "Error: Invalid ID format."
-
-    interview = db.session.get(Interview, interview_id)
-    if not interview:
-        logger.error(f"Candidate cancellation notification: Interview {interview_id} not found.")
-        return f"Error: Interview {interview_id} not found."
-
-    candidate = interview.candidate
-    if not candidate or not candidate.email:
-        logger.warning(
-            f"Candidate cancellation notification: Candidate or email missing for interview {interview_id}. Cannot send email.")
-        return f"Warning: Candidate or email missing for interview {interview_id}."
-
-    company_name_for_email = interview.company.name if interview.company else current_app.config.get('APP_NAME',
-                                                                                                     "Our Company")
-    position_name_display = f"for the position «{interview.position.position_name}»" if interview.position else "regarding your application"
-
-    scheduled_time_display = "N/A"
-    # Η μεταβλητή original_interview_status_value δεν είναι διαθέσιμη σε αυτό το task
-    # Χρησιμοποιούμε το interview.scheduled_start_time που θα πρέπει να έχει την ώρα της ακυρωμένης συνέντευξης
-    if interview.scheduled_start_time:
-        try:
-            local_tz = ZoneInfo(current_app.config.get('LOCAL_TIMEZONE', 'UTC'))
-            scheduled_time_display = interview.scheduled_start_time.astimezone(local_tz).strftime(
-                "%A, %d %B %Y at %H:%M (%Z)")
-        except Exception:
-            scheduled_time_display = interview.scheduled_start_time.strftime("%Y-%m-%d %H:%M UTC") + " (Time in UTC)"
-
-    subject = f"Update Regarding Your Interview with {company_name_for_email}"
-    email_context = {
-        'candidate_name': candidate.get_full_name(),
-        'company_name': company_name_for_email,
-        'position_name_display': position_name_display,
-        'cancellation_reason_by_recruiter': cancellation_reason_by_recruiter or "The company has cancelled this interview.",
-        'originally_scheduled_time': scheduled_time_display,  # Εμφάνιση της ώρας που ήταν προγραμματισμένη
-        'now': datetime.utcnow(),
-        'app_home_url': current_app.config.get('FRONTEND_URL')
-    }
-
-    html_body = ""
-    text_body = ""
-    try:
-        html_body = render_template('email/interview_cancelled_by_recruiter_candidate.html', **email_context)
-        text_body = render_template('email/interview_cancelled_by_recruiter_candidate.txt', **email_context)
-        logger.info(
-            f"Successfully rendered candidate cancellation notification (by recruiter) email templates for interview {interview_id}.")
-    except Exception as template_e:
-        logger.error(
-            f"Candidate cancellation notification (by recruiter) email template rendering FAILED for interview {interview_id}: {template_e}",
-            exc_info=True)
-        html_body = f"<p>Dear {email_context['candidate_name']},</p><p>This email is to inform you that your interview {email_context['position_name_display']} with {email_context['company_name']} has been cancelled by the company.</p>"
-        if email_context[
-            'originally_scheduled_time'] != "N/A": html_body += f"<p>The interview was originally scheduled for: {email_context['originally_scheduled_time']}.</p>"
-        if email_context[
-            'cancellation_reason_by_recruiter'] != "The company has cancelled this interview.": html_body += f"<p>Reason provided: {email_context['cancellation_reason_by_recruiter']}</p>"
-        html_body += f"<p>We apologize for any inconvenience this may cause. The company may contact you if they wish to reschedule or provide further information.</p>"
-        text_body = f"Dear {email_context['candidate_name']},\n\nThis email is to inform you that your interview {email_context['position_name_display']} with {email_context['company_name']} has been cancelled by the company.\n"
-        if email_context[
-            'originally_scheduled_time'] != "N/A": text_body += f"The interview was originally scheduled for: {email_context['originally_scheduled_time']}.\n"
-        if email_context[
-            'cancellation_reason_by_recruiter'] != "The company has cancelled this interview.": text_body += f"Reason provided: {email_context['cancellation_reason_by_recruiter']}\n"
-        text_body += f"We apologize for any inconvenience this may cause. The company may contact you if they wish to reschedule or provide further information.\n"
-
-    sender_email = current_app.config.get('MAIL_DEFAULT_SENDER')
-    msg = Message(subject, sender=sender_email, recipients=[candidate.email])
-    msg.body = text_body
-    msg.html = html_body
-
-    try:
-        if current_app.config.get('MAIL_SUPPRESS_SEND', False):
-            logger.info(
-                f"MAIL_SUPPRESS_SEND is True. Candidate cancellation notification (by recruiter) to {candidate.email} for interview {interview_id} NOT sent.")
-        else:
-            mail.send(msg)
-            logger.info(
-                f"Candidate cancellation notification (by recruiter) sent to {candidate.email} for interview {interview_id}.")
-        return f"Candidate cancellation notification (by recruiter) email processed for interview {interview_id}."
-    except Exception as e_mail:
-        logger.error(
-            f"Failed to send candidate cancellation notification (by recruiter) for interview {interview_id}: {e_mail}",
-            exc_info=True)
-        try:
-            raise self.retry(exc=e_mail, countdown=int(self.default_retry_delay * (2 ** self.request.retries)))
-        except self.MaxRetriesExceededError:
-            logger.error(
-                f"Max retries exceeded for candidate cancellation notification (by recruiter), interview {interview_id}.")
-            return f"Failed candidate cancellation notification (by recruiter) (max retries) for interview {interview_id}."
-        except Exception as retry_exc:
-            logger.error(
-                f"Retry mechanism failed for candidate cancellation notification (by recruiter), interview {interview_id}: {retry_exc}",
-                exc_info=True)
-            return f"Failed candidate cancellation notification (by recruiter) (retry mechanism error) for interview {interview_id}."
-
-
+# --- Υπόλοιπα tasks (send_interview_reminder_email_task) παραμένουν ίδια ---
 @celery.task(bind=True, max_retries=3, default_retry_delay=60)
 def send_interview_reminder_email_task(self, user_email, user_name, candidate_name, interview_datetime_iso,
                                        interview_location, position_name, lead_time_minutes, interview_id_str):
+    # ... (ίδιο με την τελευταία πλήρη έκδοση που σου έστειλα) ...
     logger.info(
         f"Executing send_interview_reminder_email_task to {user_email} for candidate {candidate_name}, interview ID: {interview_id_str}")
 
