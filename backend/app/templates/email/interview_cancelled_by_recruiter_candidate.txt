@@ -1,0 +1,18 @@
+Αγαπητέ/ή {{ candidate_name }},
+
+Θα θέλαμε να σας ενημερώσουμε ότι η προγραμματισμένη συνέντευξή σας {{ position_name_display }} με την εταιρεία {{ company_name }}
+{% if originally_scheduled_time and originally_scheduled_time != "N/A" %}που ήταν προγραμματισμένη για {{ originally_scheduled_time }} {% endif %}
+έχει ακυρωθεί από την εταιρεία.
+
+{% if cancellation_reason_by_recruiter and cancellation_reason_by_recruiter != "The company has cancelled this interview." %}
+Λόγος που δόθηκε από την εταιρεία: {{ cancellation_reason_by_recruiter }}
+{% endif %}
+
+Ζητούμε συγγνώμη για την οποιαδήποτε αναστάτωση. Η εταιρεία ενδέχεται να επικοινωνήσει μαζί σας για επαναπρογραμματισμό ή για περαιτέρω πληροφορίες.
+
+Με εκτίμηση,
+Η ομάδα της {{ company_name }}
+
+---
+© {{ now.year }} {{ company_name }}.
+Επισκεφθείτε την ιστοσελίδα μας: {{ app_home_url }}

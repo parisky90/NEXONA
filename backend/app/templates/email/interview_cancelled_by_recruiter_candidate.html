@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="el">
+<head>
+    <meta charset="UTF-8">
+    <title>Ενημέρωση για τη Συνέντευξή σας - {{ company_name }}</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; margin: 0; padding: 0; background-color: #f4f4f4; }
+        .email-container { max-width: 600px; margin: 20px auto; background-color: #ffffff; padding: 20px; border: 1px solid #dddddd; }
+        .header { background-color: #ffc107; color: #343a40; padding: 10px; text-align: center; } /* Warning color */
+        .content { padding: 20px; }
+        .content p { margin-bottom: 15px; }
+        .footer { text-align: center; padding: 10px; font-size: 0.9em; color: #777777; }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="header">
+            <h2>Σημαντική Ενημέρωση για τη Συνέντευξή σας</h2>
+        </div>
+        <div class="content">
+            <p>Αγαπητέ/ή {{ candidate_name }},</p>
+            <p>
+                Θα θέλαμε να σας ενημερώσουμε ότι η προγραμματισμένη συνέντευξή σας {{ position_name_display }} με την εταιρεία <strong>{{ company_name }}</strong>
+                {% if originally_scheduled_time and originally_scheduled_time != "N/A" %}
+                    που ήταν προγραμματισμένη για <strong>{{ originally_scheduled_time }}</strong>
+                {% endif %}
+                έχει ακυρωθεί από την εταιρεία.
+            </p>
+
+            {% if cancellation_reason_by_recruiter and cancellation_reason_by_recruiter != "The company has cancelled this interview." %}
+                <p><strong>Λόγος που δόθηκε από την εταιρεία:</strong> {{ cancellation_reason_by_recruiter }}</p>
+            {% endif %}
+
+            <p>Ζητούμε συγγνώμη για την οποιαδήποτε αναστάτωση. Η εταιρεία ενδέχεται να επικοινωνήσει μαζί σας για επαναπρογραμματισμό ή για περαιτέρω πληροφορίες.</p>
+            <p>
+                Με εκτίμηση,<br>
+                Η ομάδα της {{ company_name }}
+            </p>
+        </div>
+        <div class="footer">
+            <p>© {{ now.year }} {{ company_name }}. All rights reserved.</p>
+            <p><a href="{{ app_home_url }}">Επισκεφθείτε την ιστοσελίδα μας</a></p>
+        </div>
+    </div>
+</body>
+</html>

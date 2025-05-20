@@ -109,6 +109,7 @@ def session_status():
 @bp.route('/dashboard/summary', methods=['GET'])
 @login_required
 def dashboard_summary():
+    # ... (ΚΩΔΙΚΑΣ ΤΟΥ dashboard_summary() ΟΠΩΣ ΣΤΟ ΠΡΟΗΓΟΥΜΕΝΟ ΜΗΝΥΜΑ ΓΙΑ ΕΠΑΝΑΦΟΡΑ ΚΛΕΙΔΙΩΝ) ...
     current_app.logger.info(
         f"--- HIT /api/v1/dashboard/summary (user: {current_user.id if current_user.is_authenticated else 'Guest'}, role: {current_user.role if current_user.is_authenticated else 'N/A'}, company_id from user: {current_user.company_id if current_user.is_authenticated else 'N/A'}) ---")
     current_app.logger.debug(f"Request args for summary: {request.args}")
@@ -161,7 +162,7 @@ def dashboard_summary():
             count_query = count_query.filter(Candidate.company_id == company_id_to_filter)
         count = count_query.count()
 
-        stage_key_for_summary = stage.lower().replace(" ", "")  # Επαναφορά παλιού κλειδιού
+        stage_key_for_summary = stage.lower().replace(" ", "")
         summary_data[stage_key_for_summary] = count
 
         candidates_by_stage_list_for_chart.append({"stage_name": stage, "count": count})
@@ -201,7 +202,7 @@ def dashboard_summary():
     else:
         summary_data['avg_days_in_needs_review'] = "N/A"
 
-    interview_scheduled_count = summary_data.get('interviewscheduled', 0)  # Χρήση παλιού κλειδιού
+    interview_scheduled_count = summary_data.get('interviewscheduled', 0)
     initial_pipeline_sum = (summary_data.get('new', 0) +
                             summary_data.get('processing', 0) +
                             summary_data.get('needsreview', 0) +
@@ -220,8 +221,8 @@ def dashboard_summary():
 
 
 # === Candidate Routes ===
-# (Οι υπόλοιπες συναρτήσεις παραμένουν ίδιες με την προηγούμενη πλήρη έκδοση που σου έστειλα,
-# συμπεριλαμβανομένης της διορθωμένης cancel_interview_by_candidate)
+# ... (upload_cv, get_candidates, get_candidate_detail, update_candidate_detail, delete_candidate, propose_interview,
+#      confirm_interview_slot, reject_interview_slots ΠΑΡΑΜΕΝΟΥΝ ΙΔΙΑ ΜΕ ΤΗΝ ΠΡΟΗΓΟΥΜΕΝΗ ΠΛΗΡΗ ΕΚΔΟΣΗ ΠΟΥ ΕΣΤΕΙΛΑ)
 
 @bp.route('/upload', methods=['POST'])
 @login_required
@@ -633,7 +634,6 @@ def delete_candidate(candidate_uuid):
         return jsonify({'error': f'Failed to delete candidate: {str(e)}'}), 500
 
 
-# --- propose_interview ---
 @bp.route('/candidates/<string:candidate_uuid>/propose-interview', methods=['POST'])
 @login_required
 def propose_interview(candidate_uuid):
@@ -995,6 +995,7 @@ def reject_interview_slots(token):
                                company_name=company_name_for_page), 500
 
 
+# --- ΔΙΟΡΘΩΜΕΝΗ ΣΥΝΑΡΤΗΣΗ cancel_interview_by_candidate ---
 @bp.route('/interviews/cancel-by-candidate/<string:cancel_token>', methods=['GET', 'POST'])
 def cancel_interview_by_candidate(cancel_token):
     interview = Interview.query.filter_by(cancellation_token=cancel_token).first()
@@ -1119,6 +1120,105 @@ def cancel_interview_by_candidate(cancel_token):
                                    ZoneInfo(current_app.config.get('LOCAL_TIMEZONE', 'UTC'))).strftime(
                                    "%A, %d %B %Y at %H:%M") if interview.scheduled_start_time else "N/A")
                            )
+
+
+# --- ΝΕΟ ENDPOINT: Cancel Interview by Recruiter ---
+@bp.route('/interviews/<int:interview_id>/cancel-by-recruiter', methods=['POST'])
+@login_required
+def cancel_interview_by_recruiter(interview_id):
+    # Έλεγχος δικαιωμάτων: Μόνο company_admin, superadmin ή ο recruiter που όρισε τη συνέντευξη
+    interview = db.session.get(Interview, interview_id)
+    if not interview:
+        return jsonify({'error': 'Interview not found'}), 404
+
+    candidate = interview.candidate  # Παίρνουμε τον υποψήφιο
+    if not candidate:  # Απίθανο αν υπάρχει interview, αλλά για ασφάλεια
+        return jsonify({'error': 'Candidate associated with this interview not found'}), 404
+
+    # Έλεγχος δικαιωμάτων
+    can_cancel = False
+    if current_user.role == 'superadmin':
+        can_cancel = True
+    elif current_user.role == 'company_admin' and current_user.company_id == interview.company_id:
+        can_cancel = True
+    elif current_user.id == interview.recruiter_id:  # Ο recruiter που την όρισε
+        can_cancel = True
+
+    if not can_cancel:
+        current_app.logger.warning(
+            f"User {current_user.id} (Role: {current_user.role}) attempted to cancel interview {interview_id} without permission.")
+        return jsonify({'error': 'Forbidden: You do not have permission to cancel this interview.'}), 403
+
+    if interview.status not in [InterviewStatus.PROPOSED, InterviewStatus.SCHEDULED]:
+        return jsonify({
+                           'error': f'Interview cannot be cancelled by recruiter in its current state ({interview.status.value}).'}), 400
+
+    data = request.get_json()
+    reason = data.get('reason', 'Cancelled by recruiter.') if data else 'Cancelled by recruiter.'
+
+    original_interview_status = interview.status.value
+    old_candidate_status = candidate.current_status if candidate else None
+
+    interview.status = InterviewStatus.CANCELLED_BY_RECRUITER
+    interview.internal_notes = (interview.internal_notes or "") + \
+                               f"\nCancelled by {current_user.username} on {datetime.now(dt_timezone.utc).strftime('%Y-%m-%d')}. Reason: {reason}"
+    # Ακύρωση των tokens αν υπάρχουν (αν ήταν PROPOSED ή SCHEDULED)
+    interview.confirmation_token = None
+    interview.token_expiration = None
+    interview.cancellation_token = None
+    interview.cancellation_token_expiration = None
+    interview.updated_at = datetime.now(dt_timezone.utc)
+
+    if candidate:
+        # Αποφασίζουμε σε ποιο status θα πάει ο υποψήφιος
+        # Αν ήταν 'Interview Proposed' ή 'Interview Scheduled', τον γυρνάμε σε 'Interested'
+        # ή 'Needs Review' αν δεν είχε περάσει από εκεί.
+        new_candidate_status = "Interested"  # Default
+        if old_candidate_status == "Interview Proposed" or old_candidate_status == "Interview Scheduled":
+            candidate.current_status = new_candidate_status
+        # Εναλλακτικά, θα μπορούσαμε να τον πάμε σε ένα πιο γενικό status αν δεν ξέρουμε το προηγούμενο.
+        # candidate.current_status = "Needs Review"
+
+        if candidate.current_status != old_candidate_status:
+            candidate.status_last_changed_date = datetime.now(dt_timezone.utc)
+
+        candidate.candidate_confirmation_status = "RecruiterCancelled"  # Ένα νέο status για να ξέρουμε
+        candidate.updated_at = datetime.now(dt_timezone.utc)
+        candidate.add_history_event(
+            event_type="INTERVIEW_CANCELLED_BY_RECRUITER",
+            description=f"Interview (ID: {interview.id}, was {original_interview_status}) cancelled by recruiter {current_user.username}. Reason: {reason}",
+            actor_id=current_user.id,
+            details={
+                'interview_id': str(interview.id),
+                'reason': reason,
+                'previous_interview_status': original_interview_status,
+                'previous_candidate_status': old_candidate_status,
+                'new_candidate_status': candidate.current_status
+            }
+        )
+
+    try:
+        db.session.commit()
+        current_app.logger.info(
+            f"Interview {interview_id} cancelled by recruiter {current_user.username}. Reason: {reason}")
+
+        # Κλήση Celery task για ειδοποίηση του υποψηφίου
+        task_name = 'app.tasks.communication.send_interview_cancellation_to_candidate_task'  # Νέο task
+        celery.send_task(task_name, args=[str(interview.id), reason])
+        current_app.logger.info(
+            f"Celery task '{task_name}' dispatched for cancelled interview {interview.id} to notify candidate.")
+
+        # Επιστροφή του ενημερωμένου interview και candidate object
+        return jsonify({
+            'message': 'Interview cancelled successfully.',
+            'interview': interview.to_dict(include_slots=True, include_candidate_info=False),
+            # Στέλνουμε χωρίς candidate info για να μην έχουμε κυκλική εξάρτηση αν το candidate.to_dict καλεί interviews
+            'candidate_status': candidate.current_status if candidate else None
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f"Error cancelling interview {interview_id} by recruiter: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to cancel interview.'}), 500
 
 
 @bp.route('/settings', methods=['GET'])
