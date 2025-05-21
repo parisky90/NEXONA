@@ -12,7 +12,9 @@
   "dependencies": {
     "@heroicons/react": "^2.2.0",
     "axios": "^1.8.4",
+    "moment": "^2.30.1",
     "react": "^19.0.0",
+    "react-big-calendar": "^1.18.0",
     "react-dom": "^19.0.0",
     "react-dropzone": "^14.3.8",
     "react-pdf": "^9.2.1",

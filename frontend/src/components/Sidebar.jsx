@@ -1,7 +1,7 @@
 // frontend/src/components/Sidebar.jsx
 import React from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
-import { useAuth } from '../App'; // Ελέγξτε το path αν το App.jsx είναι αλλού
+import { useAuth } from '../App';
 import './Sidebar.css';
 
 import {
@@ -12,7 +12,7 @@ import {
   BuildingOffice2Icon,
   ShieldCheckIcon,
   ClockIcon,
-  UserPlusIcon,       // Θα το χρησιμοποιήσουμε για το Interview Scheduled
+  UserPlusIcon,
   CheckBadgeIcon,
   FunnelIcon,
   AcademicCapIcon,
@@ -21,8 +21,10 @@ import {
   NoSymbolIcon,
   ArrowPathIcon,
   ExclamationTriangleIcon,
-  CalendarDaysIcon,         // Για το Company Interviews
-  ChatBubbleLeftRightIcon // Για το Interview Proposed
+  CalendarDaysIcon,
+  ChatBubbleLeftRightIcon,
+  BuildingStorefrontIcon,
+  BriefcaseIcon // <<< ΝΕΟ ΕΙΚΟΝΙΔΙΟ ΓΙΑ POSITIONS
 } from '@heroicons/react/24/outline';
 
 import { CheckCircleIcon as CheckCircleSolidIcon } from '@heroicons/react/24/solid';
@@ -42,13 +44,12 @@ function Sidebar() {
 
   const iconClassName = "sidebar-icon";
 
-  // Η renderNavLink σου δεν είχε το <li>, το προσθέτω για σωστή δομή λίστας
   const renderNavLink = (to, IconComponent, text, additionalCondition = true, isHired = false) => {
-    if (!additionalCondition) { // Προσθήκη ελέγχου για το additionalCondition
+    if (!additionalCondition) {
         return null;
     }
     return (
-      <li> {/* Κάθε NavLink μέσα σε <li> */}
+      <li>
         <NavLink
           to={to}
           className={({ isActive }) => isActive ? "sidebar-link active-link" : "sidebar-link"}
@@ -63,11 +64,9 @@ function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebar-user-info">
-        {/* Διόρθωση: εμφάνιση του role με αντικατάσταση του '_' */}
         <p className="user-role-display">{currentUser.role.replace('_', ' ')}</p>
         {currentUser.company_name && <p className="company-name-display">{currentUser.company_name}</p>}
       </div>
-      {/* ΑΛΛΑΓΗ: Χρήση <ul> αντί για <nav> απευθείας για τα links */}
       <ul className="sidebar-nav">
         {renderNavLink("/dashboard", ChartBarSquareIcon, "Dashboard")}
 
@@ -75,30 +74,28 @@ function Sidebar() {
         {renderNavLink("/candidates/NeedsReview", ClockIcon, "Needs Review")}
         {renderNavLink("/candidates/Accepted", CheckBadgeIcon, "Accepted")}
         {renderNavLink("/candidates/Interested", FunnelIcon, "Interested")}
-        {/* ΝΕΑ LINKS ΓΙΑ ΣΥΝΕΝΤΕΥΞΕΙΣ */}
         {renderNavLink("/candidates/InterviewProposed", ChatBubbleLeftRightIcon, "Interview Proposed")}
         {renderNavLink("/candidates/InterviewScheduled", UserPlusIcon, "Interview Scheduled")}
-        {/* ΑΦΑΙΡΕΣΗ ΤΟΥ ΠΑΛΙΟΥ "Interview" LINK ΑΝ ΥΠΗΡΧΕ */}
-        {/* {renderNavLink("/candidates/Interview", UserPlusIcon, "Interview")} */}
         {renderNavLink("/candidates/Evaluation", AcademicCapIcon, "Evaluation")}
         {renderNavLink("/candidates/OfferMade", GiftIcon, "Offer Made")}
-        {renderNavLink("/candidates/Hired", CheckCircleSolidIcon, "Hired", true, true)} {/* isHired=true */}
+        {renderNavLink("/candidates/Hired", CheckCircleSolidIcon, "Hired", true, true)}
         {renderNavLink("/candidates/Rejected", XCircleIcon, "Rejected")}
         {renderNavLink("/candidates/Declined", NoSymbolIcon, "Declined")}
         {renderNavLink("/candidates/Processing", ArrowPathIcon, "Processing")}
         {renderNavLink("/candidates/ParsingFailed", ExclamationTriangleIcon, "Parsing Failed")}
 
-        {/* Company Management Section - Το additionalCondition ήταν ήδη εδώ */}
+        {/* Company Management Section */}
         {(currentUser.role === 'company_admin' || currentUser.role === 'superadmin') && (
           <>
             <div className="sidebar-section-title">Company Management</div>
-            {renderNavLink("/company/users", UsersIcon, "Manage Users")}
-            {/* ΠΡΟΣΘΗΚΗ LINK ΓΙΑ COMPANY INTERVIEWS */}
+            {renderNavLink("/company/users", UsersIcon, "Manage Users", currentUser.role === 'company_admin')}
+            {renderNavLink("/company/branches", BuildingStorefrontIcon, "Manage Branches", currentUser.role === 'company_admin')}
+            {renderNavLink("/company/positions", BriefcaseIcon, "Manage Positions", currentUser.role === 'company_admin')} {/* <<< ΝΕΟ LINK ΓΙΑ POSITIONS */}
             {renderNavLink("/company/interviews", CalendarDaysIcon, "Company Interviews")}
           </>
         )}
 
-        {/* Super Admin Section - Το additionalCondition ήταν ήδη εδώ */}
+        {/* Super Admin Section */}
         {currentUser.role === 'superadmin' && (
           <>
             <div className="sidebar-section-title">Super Admin</div>
@@ -110,7 +107,7 @@ function Sidebar() {
         <div className="sidebar-section-title">Account</div>
         {renderNavLink("/settings", Cog6ToothIcon, "Settings")}
 
-        <li> {/* Το κουμπί logout επίσης μέσα σε <li> */}
+        <li>
           <button onClick={handleLogout} className="sidebar-link logout-button">
             <ArrowLeftOnRectangleIcon className={iconClassName} />
             <span className="sidebar-link-text">Logout</span>

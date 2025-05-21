@@ -3,7 +3,7 @@ import React, { useState, useEffect, createContext, useContext } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import './App.css';
 import apiClient from './api';
-import Layout from './components/Layout'; // Υποθέτοντας ότι το Layout είναι στο components/
+import Layout from './components/Layout';
 import DashboardPage from './pages/DashboardPage';
 import CandidateDetailPage from './pages/CandidateDetailPage';
 import SettingsPage from './pages/SettingsPage';
@@ -11,20 +11,21 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import NotFoundPage from './pages/NotFoundPage';
 import CandidateListPage from './pages/CandidateListPage';
-import AdminLayout from './pages/AdminLayout'; // Υποθέτοντας ότι το AdminLayout είναι στο pages/
+import AdminLayout from './pages/AdminLayout';
 import AdminCompaniesPage from './pages/AdminCompaniesPage';
 import AdminUsersPage from './pages/AdminUsersPage';
 import CompanyUsersPage from './pages/CompanyUsersPage';
-import CompanyInterviewsPage from './pages/CompanyInterviewsPage'; // <-- ΝΕΟ IMPORT
+import CompanyInterviewsPage from './pages/CompanyInterviewsPage';
+import CompanyBranchesPage from './pages/CompanyBranchesPage';
+import CompanyPositionsPage from './pages/CompanyPositionsPage'; // <<< ΝΕΟ IMPORT ΓΙΑ POSITIONS
 
 export const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
-  const { currentUser, isLoadingAuth } = useAuth(); // Πρόσθεσε isLoadingAuth
+  const { currentUser, isLoadingAuth } = useAuth();
 
   if (isLoadingAuth) {
-    // Εμφάνισε ένα placeholder ή τίποτα όσο γίνεται έλεγχος του auth status
     return <div className="loading-placeholder" style={{display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh'}}>Checking authentication...</div>;
   }
 
@@ -32,9 +33,8 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
     return <Navigate to="/login" replace />;
   }
   if (allowedRoles && !allowedRoles.includes(currentUser.role)) {
-    // Προαιρετικά: Log ή εμφάνιση μηνύματος πριν την ανακατεύθυνση
-    console.warn(`User role '${currentUser.role}' not in allowed roles: [${allowedRoles.join(', ')}]. Redirecting.`);
-    return <Navigate to="/dashboard" replace />; // Ή σε μια σελίδα "Access Denied"
+    console.warn(`User role '${currentUser.role}' not in allowed roles: [${allowedRoles.join(', ')}]. Redirecting to /dashboard.`);
+    return <Navigate to="/dashboard" replace />;
   }
   return children ? children : <Outlet />;
 };
@@ -81,19 +81,10 @@ function App() {
       console.error("App.jsx: Logout API call failed:", error);
     } finally {
       setCurrentUser(null);
-      setIsLoadingAuth(false); // Σημαντικό για να μην κολλήσει το ProtectedRoute
+      setIsLoadingAuth(false);
       console.log("App.jsx: User logged out");
-      // Δεν χρειάζεται navigate εδώ, το ProtectedRoute θα το χειριστεί
     }
   };
-
-  // Μην κάνεις render τίποτα μέχρι να ολοκληρωθεί ο αρχικός έλεγχος session,
-  // εκτός από τις public routes (login, register).
-  // Το ProtectedRoute θα χειριστεί το loading state του.
-  // if (isLoadingAuth && !currentUser) { // Αυτό μπορεί να προκαλέσει στιγμιαία εμφάνιση του login
-  //   return <div className="loading-placeholder" style={{display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh'}}>Initializing Application...</div>;
-  // }
-
 
   return (
     <AuthContext.Provider value={{ currentUser, login, logout, isLoadingAuth, setCurrentUser }}>
@@ -104,22 +95,23 @@ function App() {
           <Route path="/register" element={!currentUser && !isLoadingAuth ? <RegisterPage /> : <Navigate to="/dashboard" replace />} />
 
           {/* Protected Routes */}
-          <Route element={<ProtectedRoute />}> {/* Γενικό ProtectedRoute για το Layout */}
+          <Route element={<ProtectedRoute />}>
             <Route path="/" element={<Layout />}>
               <Route index element={<Navigate to="/dashboard" replace />} />
               <Route path="dashboard" element={<DashboardPage />} />
               <Route path="candidate/:candidateId" element={<CandidateDetailPage />} />
               <Route path="candidates/:status" element={<CandidateListPage />} />
               <Route path="settings" element={<SettingsPage />} />
-              
-              {/* Company Admin Specific Routes (also accessible by Superadmin) */}
+
+              {/* Company Admin Specific Routes (also accessible by Superadmin if included in allowedRoles) */}
               <Route
-                path="company" // Γονικό route για company-specific σελίδες
-                element={<ProtectedRoute allowedRoles={['company_admin', 'superadmin']}><Outlet /></ProtectedRoute>} // Outlet για τα παιδιά
+                path="company"
+                element={<ProtectedRoute allowedRoles={['company_admin', 'superadmin']}><Outlet /></ProtectedRoute>}
               >
                 <Route path="users" element={<CompanyUsersPage />} />
-                <Route path="interviews" element={<CompanyInterviewsPage />} /> {/* <-- ΝΕΟ ROUTE */}
-                {/* Άλλα company routes εδώ */}
+                <Route path="interviews" element={<CompanyInterviewsPage />} />
+                <Route path="branches" element={<CompanyBranchesPage />} />
+                <Route path="positions" element={<CompanyPositionsPage />} /> {/* <<< ΝΕΟ ROUTE ΓΙΑ POSITIONS */}
               </Route>
             </Route>
 
@@ -135,19 +127,15 @@ function App() {
               <Route index element={<Navigate to="companies" replace />} />
               <Route path="companies" element={<AdminCompaniesPage />} />
               <Route path="users" element={<AdminUsersPage />} />
-              {/* Άλλα admin routes εδώ, π.χ., /admin/settings */}
             </Route>
           </Route>
-          
-          {/* NotFound Route - Πρέπει να είναι τελευταίο */}
-          {/* Αν ο χρήστης είναι συνδεδεμένος, το NotFoundPage θα είναι μέσα στο Layout */}
-          {/* Αν δεν είναι, θα είναι σκέτο */}
-          <Route 
-            path="*" 
+
+          <Route
+            path="*"
             element={
-              isLoadingAuth ? <div className="loading-placeholder">Loading...</div> : 
+              isLoadingAuth ? <div className="loading-placeholder">Loading...</div> :
               (currentUser ? <Layout><NotFoundPage /></Layout> : <NotFoundPage />)
-            } 
+            }
           />
         </Routes>
       </Router>

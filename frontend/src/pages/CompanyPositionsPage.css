@@ -1,0 +1,213 @@
+/* frontend/src/pages/CompanyPositionsPage.css */
+.company-positions-page {
+  padding: 20px;
+  background-color: var(--background-color); /* Or your page background */
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.page-header h1 {
+  color: var(--text-dark-gray);
+  font-size: 1.8em;
+}
+
+.filters-container {
+  margin-bottom: 20px;
+  padding: 10px;
+  background-color: var(--neutral-light-gray);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.filter-select {
+  padding: 8px 12px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+  background-color: #fff;
+}
+
+.positions-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 20px;
+  background-color: #fff;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.positions-table th,
+.positions-table td {
+  border: 1px solid var(--border-color-light);
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.positions-table th {
+  background-color: var(--neutral-light-gray);
+  font-weight: 600;
+  color: var(--text-dark-gray);
+}
+
+.positions-table tr:nth-child(even) {
+  background-color: var(--background-color-light);
+}
+.positions-table tr:hover {
+  background-color: var(--highlight-light-blue);
+}
+
+.position-description {
+  max-width: 300px; /* Or adjust as needed */
+  white-space: pre-wrap; /* To respect newlines in description */
+  word-break: break-word;
+  font-size: 0.9em;
+  color: var(--text-medium-gray);
+}
+
+.status-badge-pos {
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: #fff;
+  text-transform: capitalize;
+}
+.status-pos-open { background-color: var(--success-color); }
+.status-pos-closed { background-color: var(--danger-color); }
+.status-pos-on-hold { background-color: var(--warning-color); }
+
+
+.positions-table .small-button {
+  padding: 5px 10px;
+  font-size: 0.85em;
+  margin-right: 5px;
+}
+.positions-table .small-button:last-child {
+  margin-right: 0;
+}
+
+/* Pagination styling */
+.pagination-controls {
+  display: flex;
+  justify-content: space-between; /* Aligns "Page X of Y" to left, buttons to right */
+  align-items: center;
+  margin-top: 20px;
+  padding: 10px;
+  background-color: var(--neutral-light-gray);
+  border-radius: 4px;
+}
+
+.pagination-controls span {
+    font-size: 0.9em;
+    color: var(--text-medium-gray);
+}
+
+.pagination-controls button {
+  padding: 6px 12px;
+  margin-left: 8px; /* Spacing between buttons */
+  background-color: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.pagination-controls button:hover:not(:disabled) {
+  background-color: var(--primary-dark-color);
+}
+
+.pagination-controls button:disabled {
+  background-color: var(--disabled-button-bg-color);
+  color: var(--disabled-button-text-color);
+  cursor: not-allowed;
+}
+
+
+/* Modal Form Styling */
+.position-form .form-group {
+  margin-bottom: 15px;
+}
+
+.position-form label {
+  display: block;
+  margin-bottom: 5px;
+  font-weight: 500;
+  color: var(--text-dark-gray);
+}
+.required-asterisk {
+    color: var(--danger-color);
+    margin-left: 2px;
+}
+
+.position-form input[type="text"],
+.position-form textarea,
+.position-form select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  box-sizing: border-box;
+  background-color: #fff; /* Ensure input background is white */
+  color: var(--text-dark-gray);
+}
+.position-form input[type="text"]:focus,
+.position-form textarea:focus,
+.position-form select:focus {
+  border-color: var(--primary-color);
+  outline: none;
+  box-shadow: 0 0 0 2px var(--primary-color-light);
+}
+
+
+.position-form .form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.loading-inline {
+  padding: 10px;
+  text-align: center;
+  color: var(--text-medium-gray);
+  font-style: italic;
+}
+
+.error-message.main-error {
+  background-color: var(--danger-background-color);
+  color: var(--danger-color);
+  padding: 10px 15px;
+  border-radius: 4px;
+  margin-bottom: 15px;
+  border: 1px solid var(--danger-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.error-message.main-error button {
+    background: none;
+    border: none;
+    color: var(--danger-color);
+    cursor: pointer;
+    padding: 0 5px;
+}
+
+.error-message.modal-error {
+  background-color: var(--danger-background-color);
+  color: var(--danger-color);
+  padding: 8px 10px;
+  border-radius: 3px;
+  margin-bottom: 10px;
+  font-size: 0.9em;
+}

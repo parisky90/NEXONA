@@ -1,0 +1,52 @@
+/* frontend/src/components/CustomCalendarEvent.css */
+.custom-calendar-event {
+  padding: 2px 5px;
+  font-size: 0.8em; /* Πιο μικρή γραμματοσειρά */
+  border-radius: 3px;
+  background-color: #3174ad; /* Default background, μπορεί να γίνει override από eventPropGetter */
+  color: white;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap; /* Για να μην σπάει σε πολλές γραμμές αν δεν χωράει */
+  display: flex; /* Για να βάλουμε την ώρα και τον τίτλο σε σειρά αν θέλουμε */
+  flex-direction: column; /* Ή column για ώρα πάνω, τίτλο κάτω */
+  height: 100%; /* Να πιάνει όλο το ύψος του slot */
+  box-sizing: border-box;
+}
+
+.custom-calendar-event:hover {
+  opacity: 0.9;
+}
+
+.custom-event-time {
+  font-weight: bold;
+  margin-right: 5px; /* Αν είναι στην ίδια γραμμή με τον τίτλο */
+  display: block; /* Ή block αν είναι σε ξεχωριστή γραμμή */
+}
+
+.custom-event-title {
+  flex-grow: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.custom-event-subtitle {
+  font-size: 0.9em;
+  opacity: 0.8;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+  margin-top: 2px;
+}
+
+.custom-event-error {
+  padding: 2px;
+  font-size: 0.8em;
+  color: red;
+  background-color: #ffe0e0;
+  border: 1px solid red;
+  border-radius: 3px;
+}

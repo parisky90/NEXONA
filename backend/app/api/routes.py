@@ -5,14 +5,13 @@ from werkzeug.utils import secure_filename
 from app import db, s3_service_instance, celery
 from app.models import (
     User, Company, Candidate, Position, CompanySettings,
-    Interview, InterviewStatus, InterviewSlot, Branch  # <<< ΠΡΟΣΘΗΚΗ Branch
+    Interview, InterviewStatus, InterviewSlot, Branch
 )
-# from app.config import Config # Δεν χρειάζεται άμεσο import του Config εδώ, χρησιμοποιούμε current_app.config
 from datetime import datetime, timedelta, timezone as dt_timezone
 from zoneinfo import ZoneInfo
 import uuid
 import secrets
-from sqlalchemy import func
+from sqlalchemy import func, exc  # Added exc for IntegrityError
 from sqlalchemy.orm.attributes import flag_modified
 
 bp = Blueprint('api', __name__, url_prefix='/api/v1')
@@ -253,18 +252,28 @@ def upload_cv():
         filename = secure_filename(file.filename)
         file_content_bytes = file.read()
 
-        position_name_from_form = request.form.get('position', None)
+        # --- START: POSITION & BRANCH HANDLING ---
+        position_name_from_form = request.form.get('position', None)  # Ad-hoc position name
         branch_ids_str = request.form.get('branch_ids', '')
-        branch_ids = []
+        position_ids_str = request.form.get('position_ids', '')  # ΝΕΟ: Λήψη IDs θέσεων
+
+        branch_ids_int = []
         if branch_ids_str:
             try:
-                branch_ids = [int(b_id.strip()) for b_id in branch_ids_str.split(',') if b_id.strip().isdigit()]
+                branch_ids_int = [int(b_id.strip()) for b_id in branch_ids_str.split(',') if b_id.strip().isdigit()]
             except ValueError:
                 current_app.logger.warning(f"Invalid branch_ids format received: {branch_ids_str}")
 
+        position_ids_int = []
+        if position_ids_str:
+            try:
+                position_ids_int = [int(p_id.strip()) for p_id in position_ids_str.split(',') if p_id.strip().isdigit()]
+            except ValueError:
+                current_app.logger.warning(f"Invalid position_ids format received: {position_ids_str}")
+        # --- END: POSITION & BRANCH HANDLING ---
+
         try:
             file_key = f"cvs/{target_company_id}/{uuid.uuid4()}_{filename}"
-
             upload_success_key = s3_service_instance.upload_file_obj(
                 file_obj_content_bytes=file_content_bytes,
                 object_name=file_key,
@@ -277,7 +286,6 @@ def upload_cv():
                 return jsonify({'error': 'Failed to upload file to S3 storage.'}), 500
 
             placeholder_email = f"placeholder-{uuid.uuid4()}@example.com"
-
             new_candidate = Candidate(
                 company_id=target_company_id,
                 cv_original_filename=filename,
@@ -288,37 +296,66 @@ def upload_cv():
             db.session.add(new_candidate)
             db.session.flush()
 
-            if position_name_from_form and position_name_from_form.strip():
-                position = Position.query.filter_by(
+            assigned_position_names_log = []
+            if position_ids_int:
+                positions_to_assign = Position.query.filter(
+                    Position.position_id.in_(position_ids_int),
+                    Position.company_id == target_company_id
+                ).all()
+                for pos in positions_to_assign:
+                    if pos not in new_candidate.positions:
+                        new_candidate.positions.append(pos)
+                        assigned_position_names_log.append(pos.position_name)
+                current_app.logger.info(
+                    f"Associated candidate {new_candidate.candidate_id} with positions by ID: {assigned_position_names_log}")
+            elif position_name_from_form and position_name_from_form.strip():
+                position_obj = Position.query.filter_by(
                     company_id=target_company_id,
                     position_name=position_name_from_form.strip()
                 ).first()
-                if not position:
-                    position = Position(
+                if not position_obj:
+                    position_obj = Position(
                         company_id=target_company_id,
                         position_name=position_name_from_form.strip(),
                         status="Open"
                     )
-                    db.session.add(position)
-                if position not in new_candidate.positions:
-                    new_candidate.positions.append(position)
+                    db.session.add(position_obj)
+                    current_app.logger.info(
+                        f"Created new ad-hoc position '{position_obj.position_name}' for company {target_company_id} during CV upload.")
+                if position_obj not in new_candidate.positions:
+                    new_candidate.positions.append(position_obj)
+                    assigned_position_names_log.append(position_obj.position_name)
+                current_app.logger.info(
+                    f"Associated candidate {new_candidate.candidate_id} with ad-hoc position: {position_obj.position_name}")
 
-            if branch_ids:
-                branches_to_assign = Branch.query.filter(Branch.id.in_(branch_ids),
-                                                         Branch.company_id == target_company_id).all()
+            assigned_branch_names_log = []
+            if branch_ids_int:
+                branches_to_assign = Branch.query.filter(
+                    Branch.id.in_(branch_ids_int),
+                    Branch.company_id == target_company_id
+                ).all()
                 for branch in branches_to_assign:
                     if branch not in new_candidate.branches:
                         new_candidate.branches.append(branch)
+                        assigned_branch_names_log.append(branch.name)
                 current_app.logger.info(
-                    f"Associated candidate {new_candidate.candidate_id} with branches: {[b.id for b in branches_to_assign]}")
+                    f"Associated candidate {new_candidate.candidate_id} with branches by ID: {assigned_branch_names_log}")
+
+            history_details = {
+                "s3_key": file_key,
+                "original_filename": filename,
+                "branch_ids_applied": branch_ids_int,
+                "branches_applied_names": assigned_branch_names_log,
+                "position_ids_applied": position_ids_int,
+                "positions_applied_names": assigned_position_names_log,
+                "ad_hoc_position_name_given": position_name_from_form if not position_ids_int and position_name_from_form else None
+            }
 
             new_candidate.add_history_event(
                 event_type="CV_UPLOADED",
                 description=f"CV '{filename}' uploaded by {current_user.username}.",
                 actor_id=current_user.id,
-                details={"s3_key": file_key,
-                         "position_applied": position_name_from_form or "N/A",
-                         "branch_ids_applied": branch_ids}
+                details=history_details
             )
             db.session.commit()
 
@@ -333,8 +370,12 @@ def upload_cv():
                 )
                 db.session.commit()
 
-            return jsonify({'message': 'CV uploaded successfully. Parsing in progress if enabled.',
+            return jsonify({'message': 'CV uploaded successfully. Processing...',
                             'candidate_id': str(new_candidate.candidate_id)}), 201
+        except exc.IntegrityError as ie:
+            db.session.rollback()
+            current_app.logger.error(f"Integrity error during CV upload: {ie}", exc_info=True)
+            return jsonify({'error': 'A database conflict occurred. Please try again.'}), 409
         except Exception as e:
             db.session.rollback()
             current_app.logger.error(f"Error during CV upload or candidate creation: {e}", exc_info=True)
@@ -456,10 +497,9 @@ def update_candidate_detail(candidate_uuid):
     updated_fields_log = {}
     status_changed = False
     old_status_for_log = candidate.current_status
-
     new_status_from_payload = data.get('current_status')
-
     offer_made_in_this_update = False
+
     if new_status_from_payload == 'OfferMade' and old_status_for_log != 'OfferMade':
         offer_made_in_this_update = True
         candidate.offer_acceptance_token = secrets.token_urlsafe(32)
@@ -473,13 +513,9 @@ def update_candidate_detail(candidate_uuid):
         candidate.candidate_confirmation_status = None
         candidate.offer_acceptance_token = None
         candidate.offer_acceptance_token_expiration = None
-
         active_interviews = Interview.query.filter_by(candidate_id=candidate.candidate_id).filter(
-            Interview.status.in_([
-                InterviewStatus.PROPOSED, InterviewStatus.SCHEDULED,
-                InterviewStatus.COMPLETED,
-                InterviewStatus.EVALUATION_POSITIVE, InterviewStatus.EVALUATION_NEGATIVE
-            ])
+            Interview.status.in_([InterviewStatus.PROPOSED, InterviewStatus.SCHEDULED, InterviewStatus.COMPLETED,
+                                  InterviewStatus.EVALUATION_POSITIVE, InterviewStatus.EVALUATION_NEGATIVE])
         ).all()
         cancelled_interview_ids = []
         for inv in active_interviews:
@@ -487,18 +523,14 @@ def update_candidate_detail(candidate_uuid):
             inv.internal_notes = (
                                              inv.internal_notes or "") + f"\nCancelled on {datetime.now(dt_timezone.utc).strftime('%Y-%m-%d')} due to candidate re-evaluation."
             cancelled_interview_ids.append(inv.id)
-
         updated_fields_log['re_evaluation_reset'] = {
-            'evaluation_rating': 'cleared',
-            'candidate_confirmation_status': 'cleared',
-            'offer_acceptance_token': 'cleared',
-            'active_interviews_cancelled': len(cancelled_interview_ids),
+            'evaluation_rating': 'cleared', 'candidate_confirmation_status': 'cleared',
+            'offer_acceptance_token': 'cleared', 'active_interviews_cancelled': len(cancelled_interview_ids),
             'cancelled_interview_ids': [str(cid) for cid in cancelled_interview_ids]
         }
         if hasattr(candidate, 'offers') and isinstance(candidate.offers, list):
             candidate.offers = []
             flag_modified(candidate, "offers")
-
         current_app.logger.info(
             f"Candidate {candidate.candidate_id} re-evaluated. Resetting fields and cancelling {len(cancelled_interview_ids)} active interviews.")
 
@@ -506,10 +538,7 @@ def update_candidate_detail(candidate_uuid):
         if field in data:
             old_value = getattr(candidate, field, None)
             new_value = data[field]
-
-            if field == 'email' and new_value is not None:
-                new_value = new_value.lower().strip()
-
+            if field == 'email' and new_value is not None: new_value = new_value.lower().strip()
             if field == 'age':
                 if new_value == '' or new_value is None:
                     new_value = None
@@ -518,18 +547,15 @@ def update_candidate_detail(candidate_uuid):
                         new_value = int(new_value)
                     except ValueError:
                         return jsonify({'error': f'Invalid value for age: {data[field]} must be a number.'}), 400
-
             if old_value != new_value:
                 setattr(candidate, field, new_value)
                 updated_fields_log[field] = {'old': str(old_value), 'new': str(new_value)}
-                if field == 'current_status':
-                    status_changed = True
+                if field == 'current_status': status_changed = True
 
     if 'positions' in data and isinstance(data['positions'], list):
         current_position_names = {pos.position_name for pos in candidate.positions}
         new_position_names_from_data = {p_name.strip() for p_name in data['positions'] if
                                         isinstance(p_name, str) and p_name.strip()}
-
         if current_position_names != new_position_names_from_data:
             updated_fields_log['positions'] = {'old': sorted(list(current_position_names)),
                                                'new': sorted(list(new_position_names_from_data))}
@@ -547,35 +573,18 @@ def update_candidate_detail(candidate_uuid):
         new_offers_for_db = []
         for offer_data_from_frontend in data['offers']:
             if not isinstance(offer_data_from_frontend, dict): continue
-
             processed_offer_for_db = {}
             offer_amount_val = offer_data_from_frontend.get('offer_amount')
-            if offer_amount_val == '' or offer_amount_val is None:
-                processed_offer_for_db['offer_amount'] = None
-            else:
-                try:
-                    processed_offer_for_db['offer_amount'] = float(offer_amount_val)
-                except (ValueError, TypeError):
-                    processed_offer_for_db['offer_amount'] = None
-
+            processed_offer_for_db['offer_amount'] = float(offer_amount_val) if offer_amount_val not in ['',
+                                                                                                         None] else None
             processed_offer_for_db['offer_notes'] = offer_data_from_frontend.get('offer_notes', '').strip()
-
             offer_date_str = offer_data_from_frontend.get('offer_date')
-            if offer_date_str:
-                try:
-                    dt_obj = datetime.strptime(offer_date_str, "%Y-%m-%d")
-                    processed_offer_for_db['offer_date'] = dt_obj.replace(tzinfo=dt_timezone.utc).isoformat()
-                except ValueError:
-                    processed_offer_for_db['offer_date'] = None
-            else:
-                processed_offer_for_db['offer_date'] = None
-
+            processed_offer_for_db['offer_date'] = datetime.strptime(offer_date_str, "%Y-%m-%d").replace(
+                tzinfo=dt_timezone.utc).isoformat() if offer_date_str else None
             if processed_offer_for_db['offer_amount'] is not None or processed_offer_for_db['offer_notes']:
                 new_offers_for_db.append(processed_offer_for_db)
-
         if old_offers_for_log != new_offers_for_db:
             updated_fields_log['offers'] = {'old': old_offers_for_log, 'new': new_offers_for_db}
-
         candidate.offers = new_offers_for_db
         flag_modified(candidate, "offers")
 
@@ -586,21 +595,15 @@ def update_candidate_detail(candidate_uuid):
             try:
                 new_branch_ids_from_data.add(int(b_id))
             except (ValueError, TypeError):
-                current_app.logger.warning(
-                    f"Invalid branch ID '{b_id}' received for candidate {candidate_uuid}. Skipping.")
-
+                current_app.logger.warning(f"Invalid branch ID '{b_id}' for candidate {candidate_uuid}.")
         if current_branch_ids != new_branch_ids_from_data:
             updated_fields_log['branches'] = {'old_ids': sorted(list(current_branch_ids)),
                                               'new_ids': sorted(list(new_branch_ids_from_data))}
-
             new_branches_for_candidate = []
             if new_branch_ids_from_data:
-                valid_branches = Branch.query.filter(
-                    Branch.id.in_(list(new_branch_ids_from_data)),
-                    Branch.company_id == candidate.company_id
-                ).all()
+                valid_branches = Branch.query.filter(Branch.id.in_(list(new_branch_ids_from_data)),
+                                                     Branch.company_id == candidate.company_id).all()
                 new_branches_for_candidate = valid_branches
-
             candidate.branches = new_branches_for_candidate
             current_app.logger.info(
                 f"Updated branches for candidate {candidate.candidate_id} to IDs: {[b.id for b in new_branches_for_candidate]}")
@@ -611,48 +614,36 @@ def update_candidate_detail(candidate_uuid):
     history_description = f"Candidate details manually updated by {current_user.username}."
     if status_changed:
         history_description = f"Status changed by {current_user.username} from '{old_status_for_log}' to '{candidate.current_status}'."
-        other_changes_count = len(updated_fields_log)
-        if 'offer_acceptance_token' in updated_fields_log: other_changes_count -= 1
-        if 'branches' in updated_fields_log: other_changes_count -= 1
-        if 'current_status' in updated_fields_log: other_changes_count -= 1
-
-        if other_changes_count > 0:
-            history_description += " Other fields also updated."
+        other_changes_count = len(updated_fields_log) - (1 if 'current_status' in updated_fields_log else 0) - \
+                              (1 if 'offer_acceptance_token' in updated_fields_log else 0) - \
+                              (1 if 'branches' in updated_fields_log else 0)
+        if other_changes_count > 0: history_description += " Other fields also updated."
     elif updated_fields_log:
         history_description = f"Candidate details updated by {current_user.username} (status remained '{candidate.current_status}')."
 
-    candidate.add_history_event(
-        event_type="CANDIDATE_MANUALLY_UPDATED",
-        description=history_description,
-        actor_id=current_user.id,
-        details={'updated_fields': updated_fields_log}
-    )
+    candidate.add_history_event(event_type="CANDIDATE_MANUALLY_UPDATED", description=history_description,
+                                actor_id=current_user.id, details={'updated_fields': updated_fields_log})
     candidate.updated_at = datetime.now(dt_timezone.utc)
-    if status_changed:
-        candidate.status_last_changed_date = datetime.now(dt_timezone.utc)
+    if status_changed: candidate.status_last_changed_date = datetime.now(dt_timezone.utc)
 
     try:
         db.session.commit()
-
         if offer_made_in_this_update:
             last_offer_details = candidate.offers[-1] if candidate.offers else {}
             celery.send_task('app.tasks.communication.send_offer_made_email_to_candidate_task',
                              args=[str(candidate.candidate_id), last_offer_details])
-            current_app.logger.info(f"Celery task for 'Offer Made' dispatched for candidate {candidate.candidate_id}")
-
         elif status_changed and candidate.current_status == 'Hired':
             celery.send_task('app.tasks.communication.send_hired_confirmation_email_to_candidate_task',
                              args=[str(candidate.candidate_id)])
-            current_app.logger.info(f"Celery task for 'Hired' dispatched for candidate {candidate.candidate_id}")
         elif status_changed and candidate.current_status == 'Declined' and old_status_for_log == 'OfferMade':
             celery.send_task('app.tasks.communication.send_offer_declined_notification_to_recruiter_task',
                              args=[str(candidate.candidate_id)])
-            current_app.logger.info(
-                f"Celery task for 'Offer Declined by Candidate' dispatched for candidate {candidate.candidate_id}")
 
-        updated_candidate = db.session.get(Candidate, candidate_id_obj)
-        return jsonify(updated_candidate.to_dict(include_history=True, include_interviews=True, include_cv_url=True,
-                                                 include_branches=True)), 200
+        updated_candidate_data = db.session.get(Candidate, candidate_id_obj).to_dict(include_history=True,
+                                                                                     include_interviews=True,
+                                                                                     include_cv_url=True,
+                                                                                     include_branches=True)
+        return jsonify(updated_candidate_data), 200
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error updating candidate {candidate_uuid}: {e}", exc_info=True)
@@ -662,7 +653,6 @@ def update_candidate_detail(candidate_uuid):
 @bp.route('/candidate/<string:candidate_uuid>', methods=['DELETE'])
 @login_required
 def delete_candidate(candidate_uuid):
-    # ... (ίδιο με πριν) ...
     try:
         candidate_id_obj = uuid.UUID(candidate_uuid)
     except ValueError:
@@ -712,11 +702,10 @@ def delete_candidate(candidate_uuid):
 @bp.route('/candidates/<string:candidate_uuid>/propose-interview', methods=['POST'])
 @login_required
 def propose_interview(candidate_uuid):
-    # ... (ίδιο με πριν) ...
     current_app.logger.info(
         f"Propose interview called by user {current_user.id} (Role: {current_user.role}) for candidate {candidate_uuid}")
 
-    if current_user.role not in ['company_admin', 'superadmin', 'user']:
+    if current_user.role not in ['company_admin', 'superadmin', 'user']:  # Assuming 'user' is a recruiter type
         current_app.logger.warning(
             f"User {current_user.id} with role {current_user.role} tried to propose interview (Permission Denied).")
         return jsonify({'error': 'Forbidden: User does not have permission to propose interviews'}), 403
@@ -732,6 +721,7 @@ def propose_interview(candidate_uuid):
         current_app.logger.error(f"Candidate not found for UUID: {candidate_uuid} during propose interview.")
         return jsonify({'error': 'Candidate not found'}), 404
 
+    # Check if user (recruiter or admin) can act on this candidate's company
     if current_user.role != 'superadmin' and current_user.company_id != candidate.company_id:
         current_app.logger.warning(
             f"User {current_user.id} (company {current_user.company_id}) "
@@ -778,7 +768,7 @@ def propose_interview(candidate_uuid):
                 current_app.logger.error(
                     f"Propose Interview: Position with ID {position_id} not found for candidate {candidate_uuid}.")
                 return jsonify({'error': f'Position with ID {position_id} not found.'}), 404
-            if pos_obj.company_id != candidate.company_id:
+            if pos_obj.company_id != candidate.company_id:  # Ensure position belongs to candidate's company
                 current_app.logger.error(
                     f"Propose Interview: Position {position_id} (company {pos_obj.company_id}) "
                     f"does not belong to candidate's company {candidate.company_id}."
@@ -788,7 +778,7 @@ def propose_interview(candidate_uuid):
             current_app.logger.error(
                 f"Propose Interview: Invalid position_id format: {position_id_str} for candidate {candidate_uuid}")
             return jsonify({'error': 'Invalid position_id format.'}), 400
-    elif str(position_id_str) == "0":
+    elif str(position_id_str) == "0":  # Allow unsetting/no position
         position_id = None
 
     if not proposed_slots_data or not isinstance(proposed_slots_data, list) or not (1 <= len(proposed_slots_data) <= 3):
@@ -798,15 +788,12 @@ def propose_interview(candidate_uuid):
     try:
         greece_tz = ZoneInfo(current_app.config.get('LOCAL_TIMEZONE', 'Europe/Athens'))
     except Exception as tz_err:
-        current_app.logger.critical(
-            f"Could not load ZoneInfo for '{current_app.config.get('LOCAL_TIMEZONE', 'Europe/Athens')}': {tz_err}",
-            exc_info=True)
-        return jsonify({
-                           'error': f"Server timezone configuration error for '{current_app.config.get('LOCAL_TIMEZONE', 'Europe/Athens')}'."}), 500
+        current_app.logger.critical(f"Could not load ZoneInfo: {tz_err}", exc_info=True)
+        return jsonify({'error': "Server timezone configuration error."}), 500
 
     interview = Interview(
         candidate_id=candidate.candidate_id,
-        company_id=candidate.company_id,
+        company_id=candidate.company_id,  # Store company_id on interview
         recruiter_id=current_user.id,
         position_id=position_id,
         location=location,
@@ -821,107 +808,71 @@ def propose_interview(candidate_uuid):
     db.session.add(interview)
 
     try:
-        db.session.flush()
-        current_app.logger.info(
-            f"New Interview object (ID: {interview.id}) created and flushed for candidate {candidate_uuid}.")
+        db.session.flush()  # To get interview.id
+        current_app.logger.info(f"New Interview object (ID: {interview.id}) flushed for candidate {candidate_uuid}.")
     except Exception as e_flush:
         db.session.rollback()
-        current_app.logger.error(f"Error flushing session for new interview for candidate {candidate_uuid}: {e_flush}",
-                                 exc_info=True)
+        current_app.logger.error(f"Error flushing session for new interview: {e_flush}", exc_info=True)
         return jsonify({'error': 'Database error during interview creation (flush).'}), 500
 
     created_interview_slots = []
     for i, slot_data in enumerate(proposed_slots_data):
         start_time_str = slot_data.get('start_time')
         end_time_str = slot_data.get('end_time')
-
         if not start_time_str or not end_time_str:
-            current_app.logger.error(
-                f"Slot {i + 1} for interview {interview.id} (candidate {candidate_uuid}) is missing start_time or end_time.")
             db.session.rollback()
             return jsonify({'error': f'Slot {i + 1} is missing start_time or end_time'}), 400
         try:
             naive_start_dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S")
             naive_end_dt = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M:%S")
-
             local_aware_start_dt = naive_start_dt.replace(tzinfo=greece_tz)
             local_aware_end_dt = naive_end_dt.replace(tzinfo=greece_tz)
-            current_app.logger.debug(
-                f"Slot {i + 1} (Interview {interview.id}) - Naive: {naive_start_dt}, Local Aware ({current_app.config.get('LOCAL_TIMEZONE')}): {local_aware_start_dt}")
-
             if local_aware_end_dt <= local_aware_start_dt:
-                current_app.logger.error(f"Slot {i + 1} (Interview {interview.id}) end_time must be after start_time.")
                 db.session.rollback()
                 return jsonify({'error': f'Slot {i + 1} end_time must be after start_time'}), 400
-
-            if local_aware_start_dt < datetime.now(greece_tz):
-                current_app.logger.error(
-                    f"Slot {i + 1} (Interview {interview.id}) start_time {local_aware_start_dt} is in the past.")
+            if local_aware_start_dt < datetime.now(greece_tz):  # Check if in past relative to local timezone
                 db.session.rollback()
                 return jsonify({'error': f'Slot {i + 1} cannot be in the past.'}), 400
 
             utc_start_dt = local_aware_start_dt.astimezone(dt_timezone.utc)
             utc_end_dt = local_aware_end_dt.astimezone(dt_timezone.utc)
-            current_app.logger.debug(f"Slot {i + 1} (Interview {interview.id}) - UTC for DB: {utc_start_dt}")
-
-            interview_slot = InterviewSlot(
-                interview_id=interview.id,
-                start_time=utc_start_dt,
-                end_time=utc_end_dt,
-                is_selected=False
-            )
+            interview_slot = InterviewSlot(interview_id=interview.id, start_time=utc_start_dt, end_time=utc_end_dt,
+                                           is_selected=False)
             db.session.add(interview_slot)
             created_interview_slots.append(interview_slot)
-
         except ValueError as ve:
-            current_app.logger.error(
-                f"Invalid datetime format for slot {i + 1} (Interview {interview.id}, candidate {candidate_uuid}): Start='{start_time_str}', End='{end_time_str}'. Error: {ve}",
-                exc_info=True)
             db.session.rollback()
-            return jsonify({
-                'error': f'Invalid datetime format for slot {i + 1}. Expected YYYY-MM-DD HH:MM:SS in local time ({current_app.config.get("LOCAL_TIMEZONE")}). Input was Start: "{start_time_str}", End: "{end_time_str}"'}), 400
+            current_app.logger.error(f"Invalid datetime format for slot {i + 1}: {ve}", exc_info=True)
+            return jsonify(
+                {'error': f'Invalid datetime format for slot {i + 1}. Expected YYYY-MM-DD HH:MM:SS (local time).'}), 400
         except Exception as e_dt:
-            current_app.logger.error(
-                f"Unexpected error processing slot {i + 1} (Interview {interview.id}, candidate {candidate_uuid}) datetime: {e_dt}",
-                exc_info=True)
             db.session.rollback()
+            current_app.logger.error(f"Unexpected error processing slot {i + 1} datetime: {e_dt}", exc_info=True)
             return jsonify({'error': f"Error processing datetime for slot {i + 1}: {str(e_dt)}"}), 500
-
     try:
         history_event_details = {
-            'interview_id': str(interview.id),
-            'location': location or "N/A",
-            'type': interview_type or "N/A",
-            'position_id': position_id,
-            'proposed_slots_count': len(created_interview_slots)
+            'interview_id': str(interview.id), 'location': location or "N/A", 'type': interview_type or "N/A",
+            'position_id': position_id, 'proposed_slots_count': len(created_interview_slots)
         }
-        if cancelled_previous_proposal_ids:
-            history_event_details['cancelled_previous_proposals'] = cancelled_previous_proposal_ids
-
+        if cancelled_previous_proposal_ids: history_event_details[
+            'cancelled_previous_proposals'] = cancelled_previous_proposal_ids
         candidate.add_history_event(
             event_type="INTERVIEW_PROPOSED",
             description=f"Interview proposed by {current_user.username}. Awaiting candidate's response." + \
                         (
                             f" Previous proposals ({len(cancelled_previous_proposal_ids)}) were superseded." if cancelled_previous_proposal_ids else ""),
-            actor_id=current_user.id,
-            details=history_event_details
+            actor_id=current_user.id, details=history_event_details
         )
         if candidate.current_status != "Interview Proposed":
             candidate.current_status = "Interview Proposed"
             candidate.status_last_changed_date = datetime.now(dt_timezone.utc)
-
         db.session.commit()
         current_app.logger.info(
-            f"Interview {interview.id} and {len(created_interview_slots)} slots proposed successfully for candidate {candidate_uuid} by user {current_user.id}. Candidate status set to 'Interview Proposed'.")
-
+            f"Interview {interview.id} and slots proposed successfully for candidate {candidate_uuid}.")
         try:
-            task_name = 'app.tasks.communication.send_interview_proposal_email_task'
-            celery.send_task(task_name, args=[str(interview.id)])
-            current_app.logger.info(f"Celery task '{task_name}' dispatched for interview {interview.id}")
+            celery.send_task('app.tasks.communication.send_interview_proposal_email_task', args=[str(interview.id)])
         except Exception as celery_e:
-            current_app.logger.error(
-                f"Error dispatching Celery task '{task_name}' for interview {interview.id}: {celery_e}", exc_info=True)
-
+            current_app.logger.error(f"Error dispatching Celery task for interview proposal: {celery_e}", exc_info=True)
         return jsonify(interview.to_dict(include_slots=True)), 201
     except Exception as e:
         db.session.rollback()
@@ -933,34 +884,25 @@ def propose_interview(candidate_uuid):
 @bp.route('/interviews/confirm/<string:token>/<int:slot_id_choice>', methods=['GET'])
 def confirm_interview_slot(token, slot_id_choice):
     interview = Interview.query.filter_by(confirmation_token=token).first()
-
     company_name_for_page = "Our Company"
-    if interview:
-        if interview.company:
-            company_name_for_page = interview.company.name
-        elif interview.candidate and interview.candidate.company:
-            company_name_for_page = interview.candidate.company.name
+    if interview: company_name_for_page = interview.company.name if interview.company else (
+        interview.candidate.company.name if interview.candidate and interview.candidate.company else "Our Company")
 
-    if not interview:
-        return render_template("interview_action_response.html", title="Error",
-                               message="Invalid or expired confirmation link.",
-                               status_class="is-danger", company_name=company_name_for_page), 404
-
+    if not interview: return render_template("interview_action_response.html", title="Error",
+                                             message="Invalid or expired confirmation link.", status_class="is-danger",
+                                             company_name=company_name_for_page), 404
     if not interview.is_token_valid(token_type='confirmation') or interview.status != InterviewStatus.PROPOSED:
         return render_template("interview_action_response.html", title="Error",
                                message="This link has expired or the invitation is no longer active.",
                                status_class="is-danger", company_name=company_name_for_page), 400
-
     selected_slot = InterviewSlot.query.filter_by(id=slot_id_choice, interview_id=interview.id).first()
-    if not selected_slot:
-        return render_template("interview_action_response.html", title="Error",
-                               message="Invalid slot selection for this interview.",
-                               status_class="is-danger", company_name=company_name_for_page), 400
-
-    if selected_slot.is_selected:
-        return render_template("interview_action_response.html", title="Information",
-                               message="This slot selection has already been processed.",
-                               status_class="is-info", company_name=company_name_for_page), 200
+    if not selected_slot: return render_template("interview_action_response.html", title="Error",
+                                                 message="Invalid slot selection for this interview.",
+                                                 status_class="is-danger", company_name=company_name_for_page), 400
+    if selected_slot.is_selected: return render_template("interview_action_response.html", title="Information",
+                                                         message="This slot selection has already been processed.",
+                                                         status_class="is-info",
+                                                         company_name=company_name_for_page), 200
 
     interview.scheduled_start_time = selected_slot.start_time
     interview.scheduled_end_time = selected_slot.end_time
@@ -970,9 +912,7 @@ def confirm_interview_slot(token, slot_id_choice):
     interview.cancellation_token = secrets.token_urlsafe(32)
     interview.cancellation_token_expiration = datetime.now(dt_timezone.utc) + timedelta(
         days=current_app.config.get('INTERVIEW_TOKEN_EXPIRATION_DAYS', 7))
-
-    for slot_in_interview in interview.slots:
-        slot_in_interview.is_selected = (slot_in_interview.id == selected_slot.id)
+    for slot_in_interview in interview.slots: slot_in_interview.is_selected = (slot_in_interview.id == selected_slot.id)
 
     candidate = interview.candidate
     if candidate:
@@ -981,54 +921,44 @@ def confirm_interview_slot(token, slot_id_choice):
         candidate.candidate_confirmation_status = "Confirmed"
         candidate.add_history_event(
             event_type="INTERVIEW_SCHEDULED_BY_CANDIDATE",
-            description=f"Candidate confirmed interview for slot ID {selected_slot.id} ({selected_slot.start_time.astimezone(ZoneInfo(current_app.config.get('LOCAL_TIMEZONE', 'UTC'))).strftime('%Y-%m-%d %H:%M')}).",
+            description=f"Candidate confirmed interview for slot ID {selected_slot.id} ({selected_slot.start_time.astimezone(ZoneInfo(current_app.config.get('LOCAL_TIMEZONE', 'Europe/Athens'))).strftime('%Y-%m-%d %H:%M')}).",
+            # Use configured TZ
             actor_username=candidate.get_full_name() or "Candidate",
-            details={'interview_id': str(interview.id),
-                     'selected_slot_id': selected_slot.id,
+            details={'interview_id': str(interview.id), 'selected_slot_id': selected_slot.id,
                      'scheduled_time_utc': selected_slot.start_time.isoformat(),
-                     'location': interview.location or "N/A",
-                     'type': interview.interview_type or "N/A"}
+                     'location': interview.location or "N/A", 'type': interview.interview_type or "N/A"}
         )
         candidate.updated_at = datetime.now(dt_timezone.utc)
-
     interview.updated_at = datetime.now(dt_timezone.utc)
-
     try:
         db.session.commit()
         greece_tz = ZoneInfo(current_app.config.get('LOCAL_TIMEZONE', 'Europe/Athens'))
         confirmed_time_display = selected_slot.start_time.astimezone(greece_tz).strftime("%A, %d %B %Y at %H:%M (%Z)")
-
         celery.send_task('app.tasks.communication.send_interview_confirmation_to_candidate_task',
                          args=[str(interview.id), str(selected_slot.id)])
         celery.send_task('app.tasks.communication.send_interview_confirmation_to_recruiter_task',
                          args=[str(interview.id), str(selected_slot.id)])
-
         return render_template("interview_action_response.html", title="Interview Confirmed",
-                               message=f"Thank you! Your interview has been scheduled for: <strong>{confirmed_time_display}</strong>. You will receive a confirmation email shortly with details and a link to cancel or reschedule if needed.",
+                               message=f"Thank you! Your interview has been scheduled for: <strong>{confirmed_time_display}</strong>. You will receive a confirmation email shortly.",
                                status_class="is-success", company_name=company_name_for_page)
     except Exception as e:
         db.session.rollback()
-        current_app.logger.error(f"Error confirming interview slot ID {slot_id_choice} for token {token}: {e}",
-                                 exc_info=True)
+        current_app.logger.error(f"Error confirming interview slot {slot_id_choice}: {e}", exc_info=True)
         return render_template("interview_action_response.html", title="System Error",
-                               message="An error occurred while confirming your selection. Please try again later or contact us.",
-                               status_class="is-danger", company_name=company_name_for_page), 500
+                               message="An error occurred. Please contact us.", status_class="is-danger",
+                               company_name=company_name_for_page), 500
 
 
 @bp.route('/interviews/reject/<string:token>', methods=['GET'])
 def reject_interview_slots(token):
     interview = Interview.query.filter_by(confirmation_token=token).first()
     company_name_for_page = "Our Company"
-    if interview:
-        if interview.company:
-            company_name_for_page = interview.company.name
-        elif interview.candidate and interview.candidate.company:
-            company_name_for_page = interview.candidate.company.name
+    if interview: company_name_for_page = interview.company.name if interview.company else (
+        interview.candidate.company.name if interview.candidate and interview.candidate.company else "Our Company")
 
-    if not interview:
-        return render_template("interview_action_response.html", title="Error", message="Invalid or expired link.",
-                               status_class="is-danger", company_name=company_name_for_page), 404
-
+    if not interview: return render_template("interview_action_response.html", title="Error",
+                                             message="Invalid or expired link.", status_class="is-danger",
+                                             company_name=company_name_for_page), 404
     if not interview.is_token_valid(token_type='confirmation') or interview.status != InterviewStatus.PROPOSED:
         return render_template("interview_action_response.html", title="Error",
                                message="This link has expired or the invitation is no longer active.",
@@ -1038,7 +968,6 @@ def reject_interview_slots(token):
     interview.confirmation_token = None
     interview.token_expiration = None
     interview.updated_at = datetime.now(dt_timezone.utc)
-
     candidate = interview.candidate
     if candidate:
         candidate.candidate_confirmation_status = "DeclinedSlots"
@@ -1047,51 +976,37 @@ def reject_interview_slots(token):
             candidate.current_status = "Interested"
             candidate.status_last_changed_date = datetime.now(dt_timezone.utc)
             history_description += " Candidate status changed to 'Interested'."
-
-        candidate.add_history_event(
-            event_type="INTERVIEW_SLOTS_REJECTED_BY_CANDIDATE",
-            description=history_description,
-            actor_username=candidate.get_full_name() or "Candidate",
-            details={'interview_id': str(interview.id)}
-        )
+        candidate.add_history_event(event_type="INTERVIEW_SLOTS_REJECTED_BY_CANDIDATE", description=history_description,
+                                    actor_username=candidate.get_full_name() or "Candidate",
+                                    details={'interview_id': str(interview.id)})
         candidate.updated_at = datetime.now(dt_timezone.utc)
-
     try:
         db.session.commit()
         celery.send_task('app.tasks.communication.send_interview_rejection_to_recruiter_task', args=[str(interview.id)])
-
         return render_template("interview_action_response.html", title="Interview Slots Declined",
-                               message="Thank you for your response. Your preference has been recorded. A recruiter may contact you if further discussion is needed.",
+                               message="Thank you for your response. A recruiter may contact you.",
                                status_class="is-info", company_name=company_name_for_page)
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error rejecting interview slots for token {token}: {e}", exc_info=True)
-        return render_template("interview_action_response.html", title="System Error",
-                               message="An error occurred. Please try again later.", status_class="is-danger",
-                               company_name=company_name_for_page), 500
+        return render_template("interview_action_response.html", title="System Error", message="An error occurred.",
+                               status_class="is-danger", company_name=company_name_for_page), 500
 
 
 @bp.route('/interviews/cancel-by-candidate/<string:cancel_token>', methods=['GET', 'POST'])
 def cancel_interview_by_candidate(cancel_token):
     interview = Interview.query.filter_by(cancellation_token=cancel_token).first()
     company_name_for_page = "Our Company"
-    if interview:
-        if interview.company:
-            company_name_for_page = interview.company.name
-        elif interview.candidate and interview.candidate.company:
-            company_name_for_page = interview.candidate.company.name
+    if interview: company_name_for_page = interview.company.name if interview.company else (
+        interview.candidate.company.name if interview.candidate and interview.candidate.company else "Our Company")
 
-    if not interview:
-        return render_template("interview_action_response.html", title="Error",
-                               message="Invalid or expired cancellation link.",
-                               status_class="is-danger", company_name=company_name_for_page), 404
-
-    if not interview.is_token_valid(token_type='cancellation') or \
-            interview.status not in [InterviewStatus.SCHEDULED, InterviewStatus.PROPOSED]:
-        message = "This interview cannot be cancelled via this link. It may have already been completed, cancelled, or the link has expired."
-        current_app.logger.warning(
-            f"Attempt to cancel interview {interview.id} with cancellation_token {cancel_token} in status {interview.status.value if interview.status else 'N/A'} denied or token invalid.")
-        return render_template("interview_action_response.html", title="Information", message=message,
+    if not interview: return render_template("interview_action_response.html", title="Error",
+                                             message="Invalid or expired cancellation link.", status_class="is-danger",
+                                             company_name=company_name_for_page), 404
+    if not interview.is_token_valid(token_type='cancellation') or interview.status not in [InterviewStatus.SCHEDULED,
+                                                                                           InterviewStatus.PROPOSED]:
+        return render_template("interview_action_response.html", title="Information",
+                               message="This interview cannot be cancelled or the link has expired.",
                                status_class="is-warning", company_name=company_name_for_page), 400
 
     cancellation_threshold_hours = current_app.config.get('INTERVIEW_CANCELLATION_THRESHOLD_HOURS', 12)
@@ -1099,278 +1014,194 @@ def cancel_interview_by_candidate(cancel_token):
             (interview.scheduled_start_time - datetime.now(dt_timezone.utc) < timedelta(
                 hours=cancellation_threshold_hours)):
         return render_template("interview_action_response.html", title="Cancellation Not Allowed",
-                               message=f"This interview is scheduled too soon (within {cancellation_threshold_hours} hours) to be cancelled online. Please contact {company_name_for_page} directly if you need to make changes.",
+                               message=f"Interview is too soon (within {cancellation_threshold_hours} hours) to cancel online. Please contact {company_name_for_page}.",
                                status_class="is-warning", company_name=company_name_for_page), 400
 
     if request.method == 'POST':
         cancellation_reason = request.form.get('cancellation_reason', '').strip()[:500]
         reschedule_preference = request.form.get('reschedule_preference', 'unknown')
-
         original_interview_status_value = interview.status.value
-
         candidate = interview.candidate
-        old_candidate_status_for_log = None
-        if candidate:
-            old_candidate_status_for_log = candidate.current_status
+        old_candidate_status_for_log = candidate.current_status if candidate else None
 
         interview.status = InterviewStatus.CANCELLED_BY_CANDIDATE
-        if cancellation_reason:
-            interview.cancellation_reason_candidate = cancellation_reason
-        interview.cancellation_token = None
+        if cancellation_reason: interview.cancellation_reason_candidate = cancellation_reason
+        interview.cancellation_token = None;
         interview.cancellation_token_expiration = None
         interview.updated_at = datetime.now(dt_timezone.utc)
-
-        history_event_description = f"Candidate cancelled interview (was {original_interview_status_value})."
-        if cancellation_reason:
-            history_event_description += f" Reason: {cancellation_reason}"
+        history_event_description = f"Candidate cancelled interview (was {original_interview_status_value}). Reason: {cancellation_reason or 'N/A'}."
 
         if candidate:
             candidate.candidate_confirmation_status = "CancelledByUser"
-            new_candidate_status = candidate.current_status
-
+            new_candidate_status = "Interested" if candidate.current_status in ["Interview Scheduled",
+                                                                                "Interview Proposed"] else candidate.current_status
             if reschedule_preference == 'no_reschedule':
-                if candidate.current_status in ["Interview Scheduled", "Interview Proposed"]:
-                    new_candidate_status = "Interested"
-                history_event_description += " Candidate indicated no desire to reschedule."
-                candidate.notes = (candidate.notes or "") + \
-                                  f"\n[Interview Cancelled by User {datetime.now(dt_timezone.utc).strftime('%Y-%m-%d')}]: Does not wish to reschedule. Reason: {cancellation_reason or 'N/A'}"
-                flag_modified(candidate, "notes")
+                history_event_description += " No reschedule requested."
             elif reschedule_preference == 'request_reschedule':
-                if candidate.current_status in ["Interview Scheduled", "Interview Proposed"]:
-                    new_candidate_status = "Interested"
-                history_event_description += " Candidate requested to reschedule."
-                candidate.notes = (candidate.notes or "") + \
-                                  f"\n[Interview Cancelled by User {datetime.now(dt_timezone.utc).strftime('%Y-%m-%d')}]: Requested reschedule. Reason: {cancellation_reason or 'N/A'}"
-                flag_modified(candidate, "notes")
-            else:
-                if candidate.current_status in ["Interview Scheduled", "Interview Proposed"]:
-                    new_candidate_status = "Interested"
+                history_event_description += " Reschedule requested."
+
+            candidate.notes = (
+                                          candidate.notes or "") + f"\n[Interview Cancelled by User {datetime.now(dt_timezone.utc).strftime('%Y-%m-%d')}]: Reschedule: {reschedule_preference}. Reason: {cancellation_reason or 'N/A'}"
+            flag_modified(candidate, "notes")
 
             if new_candidate_status != old_candidate_status_for_log:
                 candidate.current_status = new_candidate_status
                 candidate.status_last_changed_date = datetime.now(dt_timezone.utc)
-
             candidate.updated_at = datetime.now(dt_timezone.utc)
             candidate.add_history_event(
-                event_type="INTERVIEW_CANCELLED_BY_CANDIDATE",
-                description=history_event_description,
+                event_type="INTERVIEW_CANCELLED_BY_CANDIDATE", description=history_event_description,
                 actor_username=candidate.get_full_name() or "Candidate",
-                details={'interview_id': str(interview.id),
-                         'reason': cancellation_reason or "N/A",
+                details={'interview_id': str(interview.id), 'reason': cancellation_reason or "N/A",
                          'previous_interview_status': original_interview_status_value,
                          'previous_candidate_status': old_candidate_status_for_log,
                          'new_candidate_status': candidate.current_status,
                          'reschedule_preference': reschedule_preference}
             )
-
         try:
             db.session.commit()
-            current_app.logger.info(
-                f"Interview {interview.id} cancelled by candidate. Token: {cancel_token}. Reason: '{cancellation_reason}', Reschedule: {reschedule_preference}")
-
-            task_name = 'app.tasks.communication.send_interview_cancellation_to_recruiter_task'
-            celery.send_task(task_name,
+            celery.send_task('app.tasks.communication.send_interview_cancellation_to_recruiter_task',
                              args=[str(interview.id), cancellation_reason or None, reschedule_preference])
-            current_app.logger.info(f"Celery task '{task_name}' dispatched for cancelled interview {interview.id}")
-
             return render_template("interview_action_response.html", title="Interview Cancelled",
-                                   message="Your interview has been successfully cancelled. Thank you for letting us know.",
-                                   status_class="is-success", company_name=company_name_for_page)
+                                   message="Your interview has been cancelled.", status_class="is-success",
+                                   company_name=company_name_for_page)
         except Exception as e:
             db.session.rollback()
-            current_app.logger.error(f"Error committing cancellation for interview token {cancel_token}: {e}",
+            current_app.logger.error(f"Error committing candidate cancellation for interview token {cancel_token}: {e}",
                                      exc_info=True)
-            return render_template("interview_action_response.html", title="System Error",
-                                   message="An error occurred while cancelling. Please try again later.",
+            return render_template("interview_action_response.html", title="System Error", message="An error occurred.",
                                    status_class="is-danger", company_name=company_name_for_page), 500
 
-    # GET request
-    return render_template("interview_cancel_form.html",
-                           interview_id=str(interview.id),
+    return render_template("interview_cancel_form.html", interview_id=str(interview.id),
                            candidate_name=interview.candidate.get_full_name() if interview.candidate else "Candidate",
-                           company_name=company_name_for_page,
-                           cancel_token=cancel_token,
-                           scheduled_time_display=(
-                               interview.scheduled_start_time.astimezone(
-                                   ZoneInfo(current_app.config.get('LOCAL_TIMEZONE', 'UTC'))).strftime(
-                                   "%A, %d %B %Y at %H:%M") if interview.scheduled_start_time else "N/A")
-                           )
+                           company_name=company_name_for_page, cancel_token=cancel_token, scheduled_time_display=(
+            interview.scheduled_start_time.astimezone(
+                ZoneInfo(current_app.config.get('LOCAL_TIMEZONE', 'Europe/Athens'))).strftime(
+                "%A, %d %B %Y at %H:%M") if interview.scheduled_start_time else "N/A"))
 
 
 @bp.route('/interviews/<int:interview_id>/cancel-by-recruiter', methods=['POST'])
 @login_required
 def cancel_interview_by_recruiter(interview_id):
     interview = db.session.get(Interview, interview_id)
-    if not interview:
-        return jsonify({'error': 'Interview not found'}), 404
-
+    if not interview: return jsonify({'error': 'Interview not found'}), 404
     candidate = interview.candidate
-    if not candidate:
-        return jsonify({'error': 'Candidate associated with this interview not found'}), 404
+    if not candidate: return jsonify({'error': 'Candidate for this interview not found'}), 404
 
-    can_cancel = False
-    if current_user.role == 'superadmin':
-        can_cancel = True
-    elif current_user.role == 'company_admin' and current_user.company_id == interview.company_id:
-        can_cancel = True
-    elif current_user.id == interview.recruiter_id:
-        can_cancel = True
-
-    if not can_cancel:
-        current_app.logger.warning(
-            f"User {current_user.id} (Role: {current_user.role}) attempted to cancel interview {interview_id} without permission.")
-        return jsonify({'error': 'Forbidden: You do not have permission to cancel this interview.'}), 403
-
+    can_cancel = (current_user.role == 'superadmin') or \
+                 (current_user.role == 'company_admin' and current_user.company_id == interview.company_id) or \
+                 (current_user.id == interview.recruiter_id)
+    if not can_cancel: return jsonify({'error': 'Forbidden: You cannot cancel this interview.'}), 403
     if interview.status not in [InterviewStatus.PROPOSED, InterviewStatus.SCHEDULED]:
-        return jsonify({
-                           'error': f'Interview cannot be cancelled by recruiter in its current state ({interview.status.value}).'}), 400
+        return jsonify({'error': f'Interview cannot be cancelled in state: {interview.status.value}.'}), 400
 
-    data = request.get_json()
+    data = request.get_json();
     reason = data.get('reason', 'Cancelled by recruiter.') if data else 'Cancelled by recruiter.'
-
     original_interview_status = interview.status.value
-    old_candidate_status = candidate.current_status if candidate else None
-
+    old_candidate_status = candidate.current_status
     interview.status = InterviewStatus.CANCELLED_BY_RECRUITER
-    interview.internal_notes = (interview.internal_notes or "") + \
-                               f"\nCancelled by {current_user.username} on {datetime.now(dt_timezone.utc).strftime('%Y-%m-%d')}. Reason: {reason}"
-    interview.confirmation_token = None
+    interview.internal_notes = (
+                                           interview.internal_notes or "") + f"\nCancelled by {current_user.username} on {datetime.now(dt_timezone.utc).strftime('%Y-%m-%d')}. Reason: {reason}"
+    interview.confirmation_token = None;
     interview.token_expiration = None
-    interview.cancellation_token = None
+    interview.cancellation_token = None;
     interview.cancellation_token_expiration = None
     interview.updated_at = datetime.now(dt_timezone.utc)
 
-    if candidate:
-        new_candidate_status = "Interested"
-        if old_candidate_status == "Interview Proposed" or old_candidate_status == "Interview Scheduled":
-            candidate.current_status = new_candidate_status
-
-        if candidate.current_status != old_candidate_status:
-            candidate.status_last_changed_date = datetime.now(dt_timezone.utc)
-
-        candidate.candidate_confirmation_status = "RecruiterCancelled"
-        candidate.updated_at = datetime.now(dt_timezone.utc)
-        candidate.add_history_event(
-            event_type="INTERVIEW_CANCELLED_BY_RECRUITER",
-            description=f"Interview (ID: {interview.id}, was {original_interview_status}) cancelled by recruiter {current_user.username}. Reason: {reason}",
-            actor_id=current_user.id,
-            details={
-                'interview_id': str(interview.id),
-                'reason': reason,
-                'previous_interview_status': original_interview_status,
-                'previous_candidate_status': old_candidate_status,
-                'new_candidate_status': candidate.current_status
-            }
-        )
-
+    new_candidate_status = "Interested" if old_candidate_status in ["Interview Proposed",
+                                                                    "Interview Scheduled"] else old_candidate_status
+    if candidate.current_status != new_candidate_status:
+        candidate.current_status = new_candidate_status
+        candidate.status_last_changed_date = datetime.now(dt_timezone.utc)
+    candidate.candidate_confirmation_status = "RecruiterCancelled"
+    candidate.updated_at = datetime.now(dt_timezone.utc)
+    candidate.add_history_event(
+        event_type="INTERVIEW_CANCELLED_BY_RECRUITER",
+        description=f"Interview (ID: {interview.id}, was {original_interview_status}) cancelled by recruiter {current_user.username}. Reason: {reason}",
+        actor_id=current_user.id,
+        details={'interview_id': str(interview.id), 'reason': reason,
+                 'previous_interview_status': original_interview_status,
+                 'previous_candidate_status': old_candidate_status, 'new_candidate_status': candidate.current_status}
+    )
     try:
         db.session.commit()
-        current_app.logger.info(
-            f"Interview {interview_id} cancelled by recruiter {current_user.username}. Reason: {reason}")
-
-        task_name = 'app.tasks.communication.send_interview_cancellation_to_candidate_task'
-        celery.send_task(task_name, args=[str(interview.id), reason])
-        current_app.logger.info(
-            f"Celery task '{task_name}' dispatched for cancelled interview {interview_id} to notify candidate.")
-
-        return jsonify({
-            'message': 'Interview cancelled successfully.',
-            'interview': interview.to_dict(include_slots=True, include_candidate_info=False),
-            'candidate_status': candidate.current_status if candidate else None
-        }), 200
+        celery.send_task('app.tasks.communication.send_interview_cancellation_to_candidate_task',
+                         args=[str(interview.id), reason])
+        return jsonify(
+            {'message': 'Interview cancelled successfully.', 'interview': interview.to_dict(include_slots=True),
+             'candidate_status': candidate.current_status}), 200
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error cancelling interview {interview_id} by recruiter: {e}", exc_info=True)
         return jsonify({'error': 'Failed to cancel interview.'}), 500
 
 
-# --- ΝΕΑ ENDPOINTS ΓΙΑ OFFER ACCEPT/REJECT ---
 @bp.route('/offer/accept/<string:token>', methods=['GET'])
 def accept_offer(token):
     candidate = Candidate.query.filter_by(offer_acceptance_token=token).first()
-
     company_name_for_page = "Our Company"
-    if candidate and candidate.company:
-        company_name_for_page = candidate.company.name
-
+    if candidate and candidate.company: company_name_for_page = candidate.company.name
     if not candidate or not candidate.is_offer_token_valid():
         return render_template("interview_action_response.html", title="Error",
-                               message="Invalid or expired offer link.",
-                               status_class="is-danger", company_name=company_name_for_page), 404  # Ή 400
-
+                               message="Invalid or expired offer link.", status_class="is-danger",
+                               company_name=company_name_for_page), 404
     if candidate.current_status != 'OfferMade':
         return render_template("interview_action_response.html", title="Information",
                                message="This offer has already been processed or is no longer active.",
                                status_class="is-info", company_name=company_name_for_page), 400
-
     old_status = candidate.current_status
     candidate.current_status = 'Hired'
     candidate.status_last_changed_date = datetime.now(dt_timezone.utc)
-    candidate.offer_acceptance_token = None  # Invalidate token
+    candidate.offer_acceptance_token = None;
     candidate.offer_acceptance_token_expiration = None
     candidate.updated_at = datetime.now(dt_timezone.utc)
-    candidate.add_history_event(
-        event_type="OFFER_ACCEPTED_BY_CANDIDATE",
-        description=f"Candidate accepted the offer. Status changed from '{old_status}' to 'Hired'.",
-        actor_username=candidate.get_full_name() or "Candidate",
-        details={'offer_token_used': token}
-    )
-
+    candidate.add_history_event(event_type="OFFER_ACCEPTED_BY_CANDIDATE",
+                                description=f"Candidate accepted offer. Status changed from '{old_status}' to 'Hired'.",
+                                actor_username=candidate.get_full_name() or "Candidate",
+                                details={'offer_token_used': token})
     try:
         db.session.commit()
         celery.send_task('app.tasks.communication.send_hired_confirmation_email_to_candidate_task',
                          args=[str(candidate.candidate_id)])
-        # Εδώ θα μπορούσες να στείλεις και email στον recruiter
-        # celery.send_task('app.tasks.communication.send_offer_accepted_notification_to_recruiter_task', args=[str(candidate.candidate_id)])
-        current_app.logger.info(f"Candidate {candidate.candidate_id} accepted offer. Status set to Hired.")
+        current_app.logger.info(f"Candidate {candidate.candidate_id} accepted offer. Status: Hired.")
         return render_template("interview_action_response.html", title="Offer Accepted!",
-                               message="Congratulations! Your offer has been accepted. We will be in touch soon with the next steps.",
+                               message="Congratulations! Your offer has been accepted. We will be in touch.",
                                status_class="is-success", company_name=company_name_for_page)
     except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error processing offer acceptance for token {token}: {e}", exc_info=True)
         return render_template("interview_action_response.html", title="System Error",
-                               message="An error occurred while processing your acceptance. Please contact us.",
-                               status_class="is-danger", company_name=company_name_for_page), 500
+                               message="An error occurred. Please contact us.", status_class="is-danger",
+                               company_name=company_name_for_page), 500
 
 
-@bp.route('/offer/reject/<string:token>', methods=['GET'])  # Ας το κρατήσουμε GET για απλότητα προς το παρόν
+@bp.route('/offer/reject/<string:token>', methods=['GET'])
 def reject_offer(token):
     candidate = Candidate.query.filter_by(offer_acceptance_token=token).first()
-
     company_name_for_page = "Our Company"
-    if candidate and candidate.company:
-        company_name_for_page = candidate.company.name
-
+    if candidate and candidate.company: company_name_for_page = candidate.company.name
     if not candidate or not candidate.is_offer_token_valid():
         return render_template("interview_action_response.html", title="Error",
-                               message="Invalid or expired offer link.",
-                               status_class="is-danger", company_name=company_name_for_page), 404
-
+                               message="Invalid or expired offer link.", status_class="is-danger",
+                               company_name=company_name_for_page), 404
     if candidate.current_status != 'OfferMade':
         return render_template("interview_action_response.html", title="Information",
                                message="This offer has already been processed or is no longer active.",
                                status_class="is-info", company_name=company_name_for_page), 400
-
     old_status = candidate.current_status
-    candidate.current_status = 'Declined'  # Το status γίνεται Declined
+    candidate.current_status = 'Declined'
     candidate.status_last_changed_date = datetime.now(dt_timezone.utc)
-    candidate.offer_acceptance_token = None  # Invalidate token
+    candidate.offer_acceptance_token = None;
     candidate.offer_acceptance_token_expiration = None
     candidate.updated_at = datetime.now(dt_timezone.utc)
-    # Εδώ θα μπορούσες να προσθέσεις πεδίο για λόγο απόρριψης αν το έπαιρνες από φόρμα
-    candidate.add_history_event(
-        event_type="OFFER_REJECTED_BY_CANDIDATE",
-        description=f"Candidate declined the offer. Status changed from '{old_status}' to 'Declined'.",
-        actor_username=candidate.get_full_name() or "Candidate",
-        details={'offer_token_used': token}
-    )
-
+    candidate.add_history_event(event_type="OFFER_REJECTED_BY_CANDIDATE",
+                                description=f"Candidate declined offer. Status changed from '{old_status}' to 'Declined'.",
+                                actor_username=candidate.get_full_name() or "Candidate",
+                                details={'offer_token_used': token})
     try:
         db.session.commit()
         celery.send_task('app.tasks.communication.send_offer_declined_notification_to_recruiter_task',
                          args=[str(candidate.candidate_id)])
-        current_app.logger.info(f"Candidate {candidate.candidate_id} rejected offer. Status set to Declined.")
+        current_app.logger.info(f"Candidate {candidate.candidate_id} rejected offer. Status: Declined.")
         return render_template("interview_action_response.html", title="Offer Declined",
                                message="Thank you for your response. We understand your decision.",
                                status_class="is-info", company_name=company_name_for_page)
@@ -1378,11 +1209,9 @@ def reject_offer(token):
         db.session.rollback()
         current_app.logger.error(f"Error processing offer rejection for token {token}: {e}", exc_info=True)
         return render_template("interview_action_response.html", title="System Error",
-                               message="An error occurred while processing your response. Please contact us.",
-                               status_class="is-danger", company_name=company_name_for_page), 500
+                               message="An error occurred. Please contact us.", status_class="is-danger",
+                               company_name=company_name_for_page), 500
 
-
-# --- ΤΕΛΟΣ ΝΕΩΝ ENDPOINTS ΓΙΑ OFFER ---
 
 @bp.route('/settings', methods=['GET'])
 @login_required
@@ -1401,46 +1230,36 @@ def get_user_settings():
 def update_user_settings():
     data = request.get_json()
     if not data: return jsonify({'error': 'No data provided'}), 400
-
-    updated_fields_count = 0
+    updated_fields_count = 0;
     settings_changed_details = {}
-
     if 'enable_email_interview_reminders' in data:
         new_val = bool(data['enable_email_interview_reminders'])
         if current_user.enable_email_interview_reminders != new_val:
             settings_changed_details['enable_email_interview_reminders'] = {
                 'old': current_user.enable_email_interview_reminders, 'new': new_val}
-            current_user.enable_email_interview_reminders = new_val
+            current_user.enable_email_interview_reminders = new_val;
             updated_fields_count += 1
-
     if 'interview_reminder_lead_time_minutes' in data:
         try:
             lead_time = int(data['interview_reminder_lead_time_minutes'])
             min_lead = current_app.config.get('MIN_INTERVIEW_REMINDER_LEAD_TIME', 15)
             max_lead = current_app.config.get('MAX_INTERVIEW_REMINDER_LEAD_TIME', 2 * 24 * 60)
-            if not (min_lead <= lead_time <= max_lead):
-                return jsonify(
-                    {'error': f'Interview reminder lead time must be between {min_lead} and {max_lead} minutes.'}), 400
+            if not (min_lead <= lead_time <= max_lead): return jsonify(
+                {'error': f'Reminder lead time must be between {min_lead} and {max_lead} minutes.'}), 400
             if current_user.interview_reminder_lead_time_minutes != lead_time:
                 settings_changed_details['interview_reminder_lead_time_minutes'] = {
                     'old': current_user.interview_reminder_lead_time_minutes, 'new': lead_time}
-                current_user.interview_reminder_lead_time_minutes = lead_time
+                current_user.interview_reminder_lead_time_minutes = lead_time;
                 updated_fields_count += 1
         except (ValueError, TypeError):
-            return jsonify(
-                {'error': 'Invalid value for interview_reminder_lead_time_minutes. Must be an integer.'}), 400
-
-    if updated_fields_count == 0:
-        return jsonify({'message': 'No settings were changed.'}), 200
-
+            return jsonify({'error': 'Invalid lead time value.'}), 400
+    if updated_fields_count == 0: return jsonify({'message': 'No settings were changed.'}), 200
     current_user.updated_at = datetime.now(dt_timezone.utc)
     try:
         db.session.commit()
-        updated_settings_response = {
-            'enable_email_interview_reminders': current_user.enable_email_interview_reminders,
-            'interview_reminder_lead_time_minutes': current_user.interview_reminder_lead_time_minutes
-        }
-        current_app.logger.info(f"User {current_user.id} updated their settings: {settings_changed_details}")
+        updated_settings_response = {'enable_email_interview_reminders': current_user.enable_email_interview_reminders,
+                                     'interview_reminder_lead_time_minutes': current_user.interview_reminder_lead_time_minutes}
+        current_app.logger.info(f"User {current_user.id} updated settings: {settings_changed_details}")
         return jsonify({'message': 'User settings updated successfully', 'settings': updated_settings_response}), 200
     except Exception as e:
         db.session.rollback()

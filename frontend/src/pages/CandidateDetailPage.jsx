@@ -6,15 +6,17 @@ import CVViewer from '../components/CVViewer';
 import HistoryLog from '../components/HistoryLog';
 import InterviewProposalForm from '../components/InterviewProposalForm';
 import ModalDialog from '../components/ModalDialog';
-import { useAuth } from '../App'; // Υποθέτουμε ότι το App.jsx εξάγει το useAuth
+import { useAuth } from '../App';
+import companyAdminService from '../services/companyAdminService'; // Για τα branches
 import './CandidateDetailPage.css';
 
+// ... (getConfirmationStatusInfo, RATING_OPTIONS παραμένουν ίδια) ...
 const getConfirmationStatusInfo = (confirmationStatus) => {
     switch (confirmationStatus) {
         case 'Confirmed': return { text: 'Επιβεβαιώθηκε από Υποψήφιο', color: 'green', className: 'status-confirmed' };
         case 'DeclinedSlots': return { text: 'Απορρίφθηκαν Slots από Υποψήφιο', color: '#cc8500', className: 'status-declined-slots' };
         case 'CancelledByUser': return { text: 'Ακυρώθηκε από Υποψήφιο', color: 'red', className: 'status-cancelled-user' };
-        case 'RecruiterCancelled': return { text: 'Ακυρώθηκε από Recruiter', color: 'darkred', className: 'status-cancelled-recruiter' }; // Νέο
+        case 'RecruiterCancelled': return { text: 'Ακυρώθηκε από Recruiter', color: 'darkred', className: 'status-cancelled-recruiter' };
         case 'Pending': return { text: 'Αναμονή Απάντησης από Υποψήφιο', color: 'orange', className: 'status-pending' };
         default: return { text: '', color: 'grey', className: 'status-unknown' };
     }
@@ -29,6 +31,7 @@ const RATING_OPTIONS = [
     { value: 'Kako', label: 'Κακό (1/5)' },
 ];
 
+
 function CandidateDetailPage() {
   const { candidateId } = useParams();
   const navigate = useNavigate();
@@ -42,17 +45,20 @@ function CandidateDetailPage() {
   const [isSubmittingInterview, setIsSubmittingInterview] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [showProposalModal, setShowProposalModal] = useState(false);
-  const [showRecruiterCancelModal, setShowRecruiterCancelModal] = useState(false); // Νέο state
-  const [cancellationReasonByRecruiter, setCancellationReasonByRecruiter] = useState(''); // Νέο state
+  const [showRecruiterCancelModal, setShowRecruiterCancelModal] = useState(false);
+  const [cancellationReasonByRecruiter, setCancellationReasonByRecruiter] = useState('');
 
   const [companyOpenPositions, setCompanyOpenPositions] = useState([]);
   const [isLoadingCompanyPositions, setIsLoadingCompanyPositions] = useState(false);
+
+  const [allCompanyBranches, setAllCompanyBranches] = useState([]); // Νέο state για τα branches της εταιρείας
+  const [isLoadingCompanyBranches, setIsLoadingCompanyBranches] = useState(false); // Νέο state
 
   const initialFormDataState = {
     first_name: '', last_name: '', email: '', phone_number: '', age: '',
     positions: [], education_summary: '', experience_summary: '', skills_summary: '',
     languages: '', seminars: '', notes: '', evaluation_rating: '',
-    hr_comments: '', offers: [],
+    hr_comments: '', offers: [], branch_ids: [], // Νέο πεδίο για τα IDs των επιλεγμένων branches
   };
   const [formData, setFormData] = useState(initialFormDataState);
 
@@ -84,10 +90,11 @@ function CandidateDetailPage() {
         offers: Array.isArray(data.offers) ? data.offers.map(o => ({
             ...o,
             offer_amount: o.offer_amount === null || o.offer_amount === undefined ? '' : String(o.offer_amount),
-            offer_date: o.offer_date ? o.offer_date.split('T')[0] : new Date().toISOString().split('T')[0] 
+            offer_date: o.offer_date ? o.offer_date.split('T')[0] : new Date().toISOString().split('T')[0]
         })) : [],
+        branch_ids: Array.isArray(data.branches) ? data.branches.map(b => b.id) : [], // Αρχικοποίηση των branch_ids
     });
-  }, []); 
+  }, []);
 
   const fetchCandidateData = useCallback(async () => {
     setIsLoading(true); setError(null);
@@ -95,11 +102,7 @@ function CandidateDetailPage() {
       const detailsRes = await apiClient.get(`/candidate/${candidateId}`);
       setCandidate(detailsRes.data);
       initializeFormData(detailsRes.data);
-      if (detailsRes.data?.cv_url) { // Έλεγχος για cv_url
-            setCvUrl(detailsRes.data.cv_url);
-      } else {
-            setCvUrl(null);
-      }
+      setCvUrl(detailsRes.data?.cv_url || null);
     } catch (err) {
       console.error("Fetch candidate error:", err.response || err);
       setError(err.response?.data?.error || 'Failed to load candidate details.');
@@ -111,30 +114,49 @@ function CandidateDetailPage() {
 
   useEffect(() => { fetchCandidateData(); }, [fetchCandidateData]);
 
+  // Fetch company positions and branches when candidate data (and thus company_id) is available
   useEffect(() => {
-    const fetchOpenPositionsForCompany = async (companyIdForFetch) => {
-        if (!companyIdForFetch) {
-            setCompanyOpenPositions([]);
-            return;
-        }
+    const companyIdForFetch = candidate?.company_id;
+    if (!companyIdForFetch) {
+        setCompanyOpenPositions([]);
+        setAllCompanyBranches([]);
+        return;
+    }
+
+    const fetchOpenPositionsForCompany = async () => {
         setIsLoadingCompanyPositions(true);
         try {
             const response = await apiClient.get(`/company/${companyIdForFetch}/positions?status=Open`);
             setCompanyOpenPositions(response.data.positions || []);
         } catch (error) {
             console.error("Error fetching company open positions:", error.response?.data || error.message);
-            setCompanyOpenPositions([]); 
+            setCompanyOpenPositions([]);
         } finally {
             setIsLoadingCompanyPositions(false);
         }
     };
 
-    if (candidate?.company_id) { // Έλεγχος για candidate και company_id
-        fetchOpenPositionsForCompany(candidate.company_id);
-    } else {
-        setCompanyOpenPositions([]);
-    }
-  }, [candidate?.company_id]);
+    const fetchAllBranchesForCompany = async () => {
+        setIsLoadingCompanyBranches(true);
+        try {
+            // Το companyAdminService.getBranches παίρνει company_id για superadmin,
+            // για company_admin το backend ξέρει την εταιρεία.
+            const branchesData = await companyAdminService.getBranches(
+                 currentUser?.role === 'superadmin' ? companyIdForFetch : null
+            );
+            setAllCompanyBranches(branchesData || []);
+        } catch (error) {
+            console.error("Error fetching company branches:", error);
+            setAllCompanyBranches([]);
+        } finally {
+            setIsLoadingCompanyBranches(false);
+        }
+    };
+
+    fetchOpenPositionsForCompany();
+    fetchAllBranchesForCompany();
+
+  }, [candidate?.company_id, currentUser?.role]);
 
 
   const handleInputChange = (event) => {
@@ -162,20 +184,32 @@ function CandidateDetailPage() {
     setFormData(prev => ({ ...prev, offers: updatedOffers }));
   };
 
+  const handleBranchSelectionChange = (event) => { // Για το multi-select των branches
+    const { options } = event.target;
+    const value = [];
+    for (let i = 0, l = options.length; i < l; i += 1) {
+      if (options[i].selected) {
+        value.push(options[i].value);
+      }
+    }
+    setFormData(prevData => ({ ...prevData, branch_ids: value.map(id => parseInt(id, 10)) }));
+  };
+
+
   const sendUpdateRequest = async (payload) => {
     if (!candidate) return;
     setIsUpdating(true); setError(null);
     try {
       const response = await apiClient.put(`/candidate/${candidate.candidate_id}`, payload);
-      setCandidate(response.data); 
-      initializeFormData(response.data); 
-      if (response.data.cv_url) setCvUrl(response.data.cv_url); 
-      setEditMode(false); 
+      setCandidate(response.data);
+      initializeFormData(response.data);
+      if (response.data.cv_url) setCvUrl(response.data.cv_url);
+      setEditMode(false);
       return response.data;
     } catch (err) {
       console.error("Update candidate error:", err.response || err);
       setError(err.response?.data?.error || `Failed to update candidate.`);
-      throw err; 
+      throw err;
     } finally {
       setIsUpdating(false);
     }
@@ -188,6 +222,7 @@ function CandidateDetailPage() {
         current_status: newStatus,
         notes: notesForPayload,
         hr_comments: editMode ? formData.hr_comments : (extraData.hr_comments || candidate?.hr_comments || ''),
+        branch_ids: editMode ? formData.branch_ids : (extraData.branch_ids || (candidate?.branches?.map(b=>b.id) || []) ), // Πρόσθεσε τα branch_ids
         ...extraData
     };
     if (newStatus === 'OfferMade' && (!extraData.offers && (!formData.offers || formData.offers.length === 0))) {
@@ -198,13 +233,12 @@ function CandidateDetailPage() {
             offer_amount: o.offer_amount === '' || o.offer_amount === null ? null : parseFloat(o.offer_amount),
             offer_date: o.offer_date ? new Date(o.offer_date).toISOString() : new Date().toISOString()
         })).filter(o => o.offer_amount !== null || (o.offer_notes && o.offer_notes.trim() !== ''));
-        if (payload.offers.length === 0) { 
+        if (payload.offers.length === 0) {
             payload.offers = [{ offer_amount: null, offer_notes: 'Initial offer pending details.', offer_date: new Date().toISOString() }];
         }
     }
     try {
       await sendUpdateRequest(payload);
-      // fetchCandidateData(); // Εναλλακτικά, για πλήρη ανανέωση
     } catch (err) { /* Error handled in sendUpdateRequest */ }
   };
 
@@ -221,13 +255,14 @@ function CandidateDetailPage() {
             offer_amount: o.offer_amount === '' || o.offer_amount === null ? null : parseFloat(o.offer_amount),
             offer_date: o.offer_date ? new Date(o.offer_date).toISOString() : new Date().toISOString()
          })).filter(o => o.offer_amount !== null || (o.offer_notes && o.offer_notes.trim() !== '')),
+         branch_ids: formData.branch_ids, // Στείλε τα επιλεγμένα branch_ids
       };
       try { await sendUpdateRequest(updatePayload); } catch (err) { /* Error handled */ }
   };
 
   const handleProposeInterviewClick = () => {
-    if (isLoadingCompanyPositions) {
-        alert("Company positions are still loading. Please wait a moment.");
+    if (isLoadingCompanyPositions || isLoadingCompanyBranches) {
+        alert("Company positions or branches are still loading. Please wait a moment.");
         return;
     }
     if (!candidate || !candidate.company_id) {
@@ -244,18 +279,22 @@ function CandidateDetailPage() {
     try {
       const response = await apiClient.post(`/candidates/${candidate.candidate_id}/propose-interview`, proposalData);
       setShowProposalModal(false);
-      // fetchCandidateData(); // Προτιμότερο να ενημερώνουμε τοπικά αν είναι δυνατόν
       setCandidate(prev => {
-          const updatedInterviews = prev.interviews ? 
-            prev.interviews.map(iv => iv.status === 'PROPOSED' ? {...iv, status: 'CANCELLED_BY_RECRUITER'} : iv) 
+          const updatedInterviews = prev.interviews ?
+            prev.interviews.map(iv => iv.status === 'PROPOSED' ? {...iv, status: 'CANCELLED_BY_RECRUITER'} : iv)
             : [];
           return {
               ...prev,
               current_status: "Interview Proposed",
+              // Το response.data εδώ είναι το interview object, όχι το candidate object
               interviews: [...updatedInterviews, response.data],
-              history: response.data.history ? [...(prev.history || []), ...response.data.history] : prev.history
+              // Θα ήταν καλύτερο το backend να επιστρέφει το ενημερωμένο candidate object
+              // ή να κάνουμε refetch. Προς το παρόν, ενημερώνουμε τοπικά το status.
+              history: response.data.new_history_event ? [...(prev.history || []), response.data.new_history_event] : prev.history, // Αν το backend στέλνει το event
           };
       });
+       // Καλύτερα να κάνουμε refetch για να είμαστε σίγουροι για την κατάσταση.
+      fetchCandidateData();
       alert(`Interview proposed successfully! Candidate status is now "Interview Proposed".`);
     } catch (err) {
       console.error("Error proposing interview:", err.response?.data || err.message);
@@ -265,13 +304,12 @@ function CandidateDetailPage() {
     }
   };
 
-  // --- ΝΕΕΣ ΣΥΝΑΡΤΗΣΕΙΣ ---
   const handleOpenRecruiterCancelModal = () => {
     if (!latestScheduledInterview && !latestProposedInterview) {
         alert("No active interview to cancel for this candidate.");
         return;
     }
-    setCancellationReasonByRecruiter(''); 
+    setCancellationReasonByRecruiter('');
     setShowRecruiterCancelModal(true);
   };
 
@@ -282,18 +320,15 @@ function CandidateDetailPage() {
         setShowRecruiterCancelModal(false);
         return;
     }
-
-    setIsUpdating(true); 
+    setIsUpdating(true);
     setError(null);
     try {
       const response = await apiClient.post(`/interviews/${interviewToCancel.id}/cancel-by-recruiter`, {
         reason: cancellationReasonByRecruiter,
       });
-      
       alert(response.data.message || 'Interview cancelled successfully by recruiter.');
-      fetchCandidateData(); // Re-fetch για να δούμε τις αλλαγές
+      fetchCandidateData();
       setShowRecruiterCancelModal(false);
-
     } catch (err) {
       console.error("Error cancelling interview by recruiter:", err.response?.data || err.message);
       setError(err.response?.data?.error || 'Failed to cancel interview by recruiter.');
@@ -308,24 +343,23 @@ function CandidateDetailPage() {
         return;
     }
     const interviewEndTime = new Date(latestScheduledInterview.scheduled_end_time);
-    if (interviewEndTime > new Date()) { // Έλεγχος αν η συνέντευξη έχει όντως τελειώσει
+    if (interviewEndTime > new Date()) {
         if (!window.confirm("This interview has not yet occurred or is currently in progress. Are you sure you want to move this candidate to the Evaluation stage?")) {
             return;
         }
     }
-    handleUpdateStatus('Evaluation', { 
-        notes: `${candidate?.notes || ''}\n(Moved to Evaluation by ${currentUser?.username || 'user'} after interview ID: ${latestScheduledInterview.id})`.trim() 
+    handleUpdateStatus('Evaluation', {
+        notes: `${candidate?.notes || ''}\n(Moved to Evaluation by ${currentUser?.username || 'user'} after interview ID: ${latestScheduledInterview.id})`.trim()
     });
   };
-  // --- ΤΕΛΟΣ ΝΕΩΝ ΣΥΝΑΡΤΗΣΕΩΝ ---
 
   const handleRejectPostInterview = () => handleUpdateStatus('Rejected', {notes: `Rejected after interview stage. ${formData.hr_comments || candidate?.hr_comments || ''}`.trim()});
   const handleMakeOffer = () => {
     if (!formData.offers || formData.offers.length === 0 || formData.offers.every(o => !o.offer_amount && !o.offer_notes)) {
-        addOfferField(); 
+        addOfferField();
     }
     handleUpdateStatus('OfferMade');
-    if (!editMode) setEditMode(true); 
+    if (!editMode) setEditMode(true);
   };
   const handleOfferAccepted = () => handleUpdateStatus('Hired');
   const handleOfferDeclinedByCandidate = () => handleUpdateStatus('Declined', {notes: `Offer declined by candidate. ${formData.hr_comments || candidate?.hr_comments || ''}`.trim()});
@@ -340,14 +374,14 @@ function CandidateDetailPage() {
   if (isLoading && !candidate) return <div className="loading-placeholder card-style">Loading candidate details...</div>;
   if (error && !candidate && !isUpdating && !isSubmittingInterview) return <div className="error-message card-style">Error: {error} <button onClick={fetchCandidateData} className="button-action button-secondary">Retry</button></div>;
   if (!candidate && !isLoading) return <div className="card-style">Candidate not found or data unavailable. <Link to="/dashboard">Go to Dashboard</Link></div>;
-  if (!candidate) return null; 
+  if (!candidate) return null;
 
   const candidateResponseInfo = getConfirmationStatusInfo(candidate.candidate_confirmation_status);
   const latestScheduledInterview = candidate.interviews?.filter(inv => inv.status === 'SCHEDULED').sort((a,b) => new Date(b.created_at) - new Date(a.created_at))[0];
   const latestProposedInterview = candidate.interviews?.filter(inv => inv.status === 'PROPOSED').sort((a,b) => new Date(b.created_at) - new Date(a.created_at))[0];
 
   const canRecruiterCancel = latestScheduledInterview || latestProposedInterview;
-  const canMoveToEvaluation = latestScheduledInterview; // Πρόσθεσε τον έλεγχο ημερομηνίας μέσα στη συνάρτηση
+  const canMoveToEvaluation = latestScheduledInterview;
 
   return (
     <div className="candidate-detail-page">
@@ -373,19 +407,51 @@ function CandidateDetailPage() {
         <div className="detail-column detail-column-left">
           <h3>Candidate Information</h3>
           <div className="info-grid">
-            {/* ... (τα υπόλοιπα πεδία παραμένουν ίδια) ... */}
             <div className="info-item"><label>First Name:</label>{editMode ? <input type="text" name="first_name" value={formData.first_name} onChange={handleInputChange} className="input-light-gray"/> : <span>{candidate.first_name || 'N/A'}</span>}</div>
             <div className="info-item"><label>Last Name:</label>{editMode ? <input type="text" name="last_name" value={formData.last_name} onChange={handleInputChange} className="input-light-gray"/> : <span>{candidate.last_name || 'N/A'}</span>}</div>
             <div className="info-item"><label>Email:</label>{editMode ? <input type="email" name="email" value={formData.email} onChange={handleInputChange} className="input-light-gray"/> : <span>{candidate.email || 'N/A'}</span>}</div>
             <div className="info-item"><label>Phone:</label>{editMode ? <input type="tel" name="phone_number" value={formData.phone_number} onChange={handleInputChange} className="input-light-gray"/> : <span>{candidate.phone_number || 'N/A'}</span>}</div>
             <div className="info-item"><label>Age:</label>{editMode ? <input type="number" name="age" value={formData.age} onChange={handleInputChange} className="input-light-gray"/> : <span>{candidate.age || 'N/A'}</span>}</div>
             <div className="info-item"><label>Applied for Position(s):</label>{editMode ? <input type="text" name="positions" value={formData.positions.join(', ')} onChange={handlePositionChange} className="input-light-gray" placeholder="Comma-separated"/> : <span>{candidate.positions?.map(p => typeof p === 'object' ? p.position_name : p).join(', ') || 'N/A'}</span>}</div>
+            
+            {/* Branches Section */}
+            <div className="info-item info-item-full">
+                <label>Assigned Branch(es):</label>
+                {editMode ? (
+                    <select
+                        multiple
+                        name="branch_ids"
+                        value={formData.branch_ids.map(String)} // Select value needs strings
+                        onChange={handleBranchSelectionChange}
+                        disabled={isLoadingCompanyBranches || allCompanyBranches.length === 0}
+                        className="input-light-gray"
+                        size={Math.min(5, allCompanyBranches.length + 1)}
+                        style={{ minHeight: '80px' }}
+                    >
+                        {isLoadingCompanyBranches ? (
+                            <option disabled>Loading branches...</option>
+                        ) : allCompanyBranches.length === 0 ? (
+                            <option disabled>No branches available for this company.</option>
+                        ) : (
+                            allCompanyBranches.map(branch => (
+                                <option key={branch.id} value={branch.id.toString()}>
+                                    {branch.name}
+                                </option>
+                            ))
+                        )}
+                    </select>
+                ) : (
+                    <span>{candidate.branches && candidate.branches.length > 0 ? candidate.branches.map(b => b.name).join(', ') : 'N/A'}</span>
+                )}
+                {editMode && allCompanyBranches.length > 0 && <small>Hold Ctrl/Cmd to select multiple.</small>}
+            </div>
+
             <div className="info-item"><label>Current Status:</label><span className={`status-badge status-${candidate.current_status?.toLowerCase().replace(/\s+/g, '-')}`}>{candidate.current_status || 'N/A'}</span></div>
             <div className="info-item"><label>Submission Date:</label><span>{formatDate(candidate.submission_date)}</span></div>
             <div className="info-item"><label>Last Updated:</label><span>{formatDate(candidate.updated_at)}</span></div>
             <div className="info-item"><label>Status Last Changed:</label><span>{formatDate(candidate.status_last_changed_date)}</span></div>
 
-            {latestScheduledInterview && (
+             {latestScheduledInterview && (
                 <div className="info-item info-item-full interview-highlight card-style" style={{borderColor: 'var(--success-color)'}}>
                     <label style={{color: 'var(--success-color)', fontWeight:'bold'}}>ACTIVE SCHEDULED INTERVIEW (ID: {latestScheduledInterview.id}):</label>
                     <span>
@@ -422,7 +488,6 @@ function CandidateDetailPage() {
                     )}
                 </div>
             )}
-
             <div className="info-item">
                 <label>EVALUATION RATING (HR):</label>
                 {editMode ? ( <select name="evaluation_rating" value={formData.evaluation_rating || ''} onChange={handleInputChange} className="input-light-gray">{RATING_OPTIONS.map(option => (<option key={option.value} value={option.value}>{option.label}</option>))}</select> ) : ( <span>{getRatingLabel(candidate.evaluation_rating)}</span> )}
@@ -449,176 +514,83 @@ function CandidateDetailPage() {
             )}
           </div>
 
-          {!editMode && (
-            <div className="action-buttons">
-                <h4>Candidate Actions</h4>
-                
-                {/* Propose/Re-Propose Interview */}
-                {(candidate.current_status === 'NeedsReview' || 
-                  candidate.current_status === 'Accepted' || 
-                  candidate.current_status === 'Interested' ||
-                  candidate.current_status === 'Interview Proposed' || 
-                  candidate.current_status === 'Interview Scheduled'
-                 ) && !showProposalModal && (
-                    <button 
-                        onClick={handleProposeInterviewClick} 
-                        className="button-action button-primary" 
-                        disabled={isUpdating || isSubmittingInterview || isLoadingCompanyPositions}
-                        style={{marginBottom: '10px'}}
-                    >
-                        {isLoadingCompanyPositions ? 'Loading Positions...' : 
-                         (candidate.current_status === 'Interview Proposed' || candidate.current_status === 'Interview Scheduled' 
-                            ? 'Re-Propose Interview Slots' 
-                            : 'Propose Interview Slots')}
+          {!editMode && ( <div className="action-buttons"> <h4>Candidate Actions</h4>
+                {/* ====== START OF FIX for 'Processing' state ====== */}
+                {candidate.current_status === 'Processing' && (
+                    <button onClick={() => handleUpdateStatus('NeedsReview')} className="button-action button-primary" disabled={isUpdating}>Move to 'Needs Review'</button>
+                )}
+                {/* ====== END OF FIX for 'Processing' state ====== */}
+
+                {(candidate.current_status === 'NeedsReview' || candidate.current_status === 'Accepted' || candidate.current_status === 'Interested' || candidate.current_status === 'Interview Proposed' || candidate.current_status === 'Interview Scheduled' ) && !showProposalModal && (
+                    <button onClick={handleProposeInterviewClick} className="button-action button-primary" disabled={isUpdating || isSubmittingInterview || isLoadingCompanyPositions || isLoadingCompanyBranches} style={{marginBottom: '10px'}}>
+                        {isLoadingCompanyPositions || isLoadingCompanyBranches ? 'Loading Data...' : (candidate.current_status === 'Interview Proposed' || candidate.current_status === 'Interview Scheduled' ? 'Re-Propose Interview Slots' : 'Propose Interview Slots')}
                     </button>
                 )}
-
-                {/* Cancel Interview by Recruiter */}
                 {canRecruiterCancel && (candidate.current_status === 'Interview Scheduled' || candidate.current_status === 'Interview Proposed') && (
-                    <button 
-                        onClick={handleOpenRecruiterCancelModal} 
-                        className="button-action button-cancel-schedule"
-                        disabled={isUpdating || isSubmittingInterview}
-                        style={{marginBottom: '10px', marginLeft: '10px'}}
-                        title="Cancel this interview (candidate will be notified)"
-                    >
+                    <button onClick={handleOpenRecruiterCancelModal} className="button-action button-cancel-schedule" disabled={isUpdating || isSubmittingInterview} style={{marginBottom: '10px', marginLeft: '10px'}} title="Cancel this interview (candidate will be notified)">
                         Cancel Interview (by Recruiter)
                     </button>
                 )}
-                
-                {/* Move to Evaluation */}
                 {canMoveToEvaluation && candidate.current_status === 'Interview Scheduled' && (
-                    <button 
-                        onClick={handleMoveToEvaluation} 
-                        className="button-action button-confirm" 
-                        disabled={isUpdating || isSubmittingInterview}
-                        style={{marginBottom: '10px', marginLeft: '10px'}}
-                        title="Mark interview as completed and move candidate to Evaluation stage"
-                    >
+                    <button onClick={handleMoveToEvaluation} className="button-action button-confirm" disabled={isUpdating || isSubmittingInterview} style={{marginBottom: '10px', marginLeft: '10px'}} title="Mark interview as completed and move candidate to Evaluation stage">
                         Move to Evaluation
                     </button>
                 )}
-                
-                {/* Υπόλοιπες Ενέργειες (προσαρμοσμένες) */}
-                {candidate.current_status === 'Processing' && (
-                    <> {/* ... */} </>
-                )}
+                {/* Removed the empty fragment for 'Processing' as we added a button above */}
                 {candidate.current_status === 'NeedsReview' && (
-                    <>
-                        <button onClick={() => handleUpdateStatus('Accepted')} className="button-action button-accept" disabled={isUpdating}>Move to 'Accepted'</button>
-                        <button onClick={() => handleUpdateStatus('Rejected', {notes: `Rejected at NeedsReview stage. ${formData.hr_comments || candidate?.hr_comments || ''}`.trim()})} className="button-action button-reject" disabled={isUpdating}>Reject Candidate</button>
-                    </>
+                    <> <button onClick={() => handleUpdateStatus('Accepted')} className="button-action button-accept" disabled={isUpdating}>Move to 'Accepted'</button> <button onClick={() => handleUpdateStatus('Rejected', {notes: `Rejected at NeedsReview stage. ${formData.hr_comments || candidate?.hr_comments || ''}`.trim()})} className="button-action button-reject" disabled={isUpdating}>Reject Candidate</button> </>
                 )}
                  {candidate.current_status === 'Accepted' && (
-                    <>
-                        <button onClick={() => handleUpdateStatus('Interested')} className="button-action button-primary" disabled={isUpdating}>Move to 'Interested'</button>
-                        <button onClick={() => handleUpdateStatus('Rejected', {notes: `Rejected at Accepted stage. ${formData.hr_comments || candidate?.hr_comments || ''}`.trim()})} className="button-action button-reject" disabled={isUpdating}>Reject Candidate</button>
-                    </>
+                    <> <button onClick={() => handleUpdateStatus('Interested')} className="button-action button-primary" disabled={isUpdating}>Move to 'Interested'</button> <button onClick={() => handleUpdateStatus('Rejected', {notes: `Rejected at Accepted stage. ${formData.hr_comments || candidate?.hr_comments || ''}`.trim()})} className="button-action button-reject" disabled={isUpdating}>Reject Candidate</button> </>
                 )}
-                {candidate.current_status === 'Interested' && 
-                 !(latestProposedInterview || latestScheduledInterview) && (
-                    <>
-                         <button onClick={() => { if(window.confirm("Are you sure you want to skip scheduling an interview and move this candidate directly to Evaluation?")) { handleUpdateStatus('Evaluation', { notes: `${formData.notes || candidate?.notes || ''}\n(Interview skipped by HR, moved directly to Evaluation)`.trim(), candidate_confirmation_status: null }); } }}
-                            className="button-action button-secondary" disabled={isUpdating} style={{marginTop: '10px'}} title="Move directly to Evaluation stage without scheduling an interview">
-                            Skip Interview (→ Evaluation)
-                        </button>
-                        <button onClick={() => handleUpdateStatus('Rejected', {notes: `Rejected at Interested stage. ${formData.hr_comments || candidate?.hr_comments || ''}`.trim()})} className="button-action button-reject" disabled={isUpdating} style={{marginTop: '10px'}}>Reject Candidate</button>
-                    </>
+                {candidate.current_status === 'Interested' && !(latestProposedInterview || latestScheduledInterview) && (
+                    <> <button onClick={() => { if(window.confirm("Are you sure you want to skip scheduling an interview and move this candidate directly to Evaluation?")) { handleUpdateStatus('Evaluation', { notes: `${formData.notes || candidate?.notes || ''}\n(Interview skipped by HR, moved directly to Evaluation)`.trim(), candidate_confirmation_status: null }); } }} className="button-action button-secondary" disabled={isUpdating} style={{marginTop: '10px'}} title="Move directly to Evaluation stage without scheduling an interview"> Skip Interview (→ Evaluation) </button> <button onClick={() => handleUpdateStatus('Rejected', {notes: `Rejected at Interested stage. ${formData.hr_comments || candidate?.hr_comments || ''}`.trim()})} className="button-action button-reject" disabled={isUpdating} style={{marginTop: '10px'}}>Reject Candidate</button> </>
                 )}
-                
-                {/* Αφαιρέθηκε το παλιό 'InterviewScheduled' block, καλύπτεται από το "Move to Evaluation" και "Cancel by Recruiter" */}
-
                 {candidate.current_status === 'Evaluation' && (
-                    <>
-                        <button onClick={handleMakeOffer} className="button-action button-accept" disabled={isUpdating}>Make Offer (→ OfferMade)</button>
-                        <button onClick={() => handleUpdateStatus('Rejected', {notes: `Rejected at Evaluation stage. ${formData.hr_comments || candidate?.hr_comments || ''}`.trim()})} className="button-action button-reject" disabled={isUpdating}>Reject Candidate</button>
-                    </>
+                    <> <button onClick={handleMakeOffer} className="button-action button-accept" disabled={isUpdating}>Make Offer (→ OfferMade)</button> <button onClick={() => handleUpdateStatus('Rejected', {notes: `Rejected at Evaluation stage. ${formData.hr_comments || candidate?.hr_comments || ''}`.trim()})} className="button-action button-reject" disabled={isUpdating}>Reject Candidate</button> </>
                 )}
                 {candidate.current_status === 'OfferMade' && (
-                    <>
-                        <p style={{fontWeight: 'bold', marginTop:'15px'}}>Offer Response:</p>
-                        <button onClick={handleOfferAccepted} className="button-action button-accept" disabled={isUpdating}>Candidate Accepted Offer (→ Hired)</button>
-                        <button onClick={handleOfferDeclinedByCandidate} className="button-action button-reject" disabled={isUpdating}>Candidate Declined Offer (→ Declined)</button>
-                    </>
+                    <> <p style={{fontWeight: 'bold', marginTop:'15px'}}>Offer Response:</p> <button onClick={handleOfferAccepted} className="button-action button-accept" disabled={isUpdating}>Candidate Accepted Offer (→ Hired)</button> <button onClick={handleOfferDeclinedByCandidate} className="button-action button-reject" disabled={isUpdating}>Candidate Declined Offer (→ Declined)</button> </>
                 )}
                 {candidate.current_status && ['Rejected', 'Declined', 'ParsingFailed', 'Hired', 'OfferMade'].includes(candidate.current_status) && (
-                    <button onClick={() => { if (window.confirm(`Are you sure you want to move candidate ${candidate.first_name || candidate.candidate_id} back to "Needs Review"? This will clear evaluation and offer related data. Active interviews may also be cancelled by the system.`)) { handleUpdateStatus('NeedsReview'); } }}
-                        className="button-action button-secondary" disabled={isUpdating} title="Move candidate back to Needs Review to re-evaluate" style={{marginTop: '15px'}}
-                    >Re-evaluate (Move to Needs Review)</button>
+                    <button onClick={() => { if (window.confirm(`Are you sure you want to move candidate ${candidate.first_name || candidate.candidate_id} back to "Needs Review"? This will clear evaluation and offer related data. Active interviews may also be cancelled by the system.`)) { handleUpdateStatus('NeedsReview'); } }} className="button-action button-secondary" disabled={isUpdating} title="Move candidate back to Needs Review to re-evaluate" style={{marginTop: '15px'}}>Re-evaluate (Move to Needs Review)</button>
                 )}
                 {candidate.current_status === 'Hired' && ( <p style={{ fontStyle: 'italic', color: 'var(--text-medium-gray)', marginTop: '15px' }}>Candidate Hired. No further status actions available other than re-evaluation.</p> )}
-            </div>
-          )}
+            </div>)}
 
-          {/* Modal για Recruiter Cancel Interview */}
-            {showRecruiterCancelModal && (
-                <ModalDialog
-                    isOpen={showRecruiterCancelModal}
-                    onClose={() => setShowRecruiterCancelModal(false)}
-                    title="Cancel Interview (by Recruiter)"
-                >
+           {showRecruiterCancelModal && (
+                <ModalDialog isOpen={showRecruiterCancelModal} onClose={() => setShowRecruiterCancelModal(false)} title="Cancel Interview (by Recruiter)">
                     <div className="recruiter-cancel-form">
                         <p>You are about to cancel the interview for <strong>{candidate?.first_name} {candidate?.last_name}</strong>.</p>
                         <p style={{fontSize: '0.9em', marginBottom:'10px'}}>Current Interview ID: {latestScheduledInterview?.id || latestProposedInterview?.id}</p>
                         <label htmlFor="cancellationReasonByRecruiter">Reason for cancellation (optional, will be logged and sent to candidate):</label>
-                        <textarea
-                            id="cancellationReasonByRecruiter"
-                            value={cancellationReasonByRecruiter}
-                            onChange={(e) => setCancellationReasonByRecruiter(e.target.value)}
-                            rows="3"
-                            style={{width: '100%', marginBottom: '15px', border:'1px solid #ccc', borderRadius:'4px', padding:'8px'}}
-                        />
+                        <textarea id="cancellationReasonByRecruiter" value={cancellationReasonByRecruiter} onChange={(e) => setCancellationReasonByRecruiter(e.target.value)} rows="3" style={{width: '100%', marginBottom: '15px', border:'1px solid #ccc', borderRadius:'4px', padding:'8px'}} />
                         {error && <p className="error-message" style={{color: 'red', marginBottom:'10px'}}>{error}</p>}
                         <div style={{textAlign: 'right'}}>
                             <button onClick={() => setShowRecruiterCancelModal(false)} className="button-action button-secondary" disabled={isUpdating} style={{marginRight: '10px'}}>Back</button>
-                            <button onClick={handleConfirmRecruiterCancelInterview} className="button-action button-danger" disabled={isUpdating}>
-                                {isUpdating ? 'Cancelling...' : 'Confirm Cancellation'}
-                            </button>
+                            <button onClick={handleConfirmRecruiterCancelInterview} className="button-action button-danger" disabled={isUpdating}> {isUpdating ? 'Cancelling...' : 'Confirm Cancellation'} </button>
                         </div>
                     </div>
                 </ModalDialog>
             )}
-
           {showProposalModal && candidate && (
-            <ModalDialog
-                isOpen={showProposalModal}
-                onClose={() => setShowProposalModal(false)}
-                title={`Propose Interview for ${candidate.first_name || ''} ${candidate.last_name || ''}`.trim()}
-            >
-                <InterviewProposalForm
-                  candidateId={candidate.candidate_id}
-                  companyPositions={companyOpenPositions} 
-                  onSubmit={handleSendInterviewProposal}
-                  onCancel={() => setShowProposalModal(false)}
-                  isSubmitting={isSubmittingInterview}
-                />
+            <ModalDialog isOpen={showProposalModal} onClose={() => setShowProposalModal(false)} title={`Propose Interview for ${candidate.first_name || ''} ${candidate.last_name || ''}`.trim()}>
+                <InterviewProposalForm candidateId={candidate.candidate_id} companyPositions={companyOpenPositions} onSubmit={handleSendInterviewProposal} onCancel={() => setShowProposalModal(false)} isSubmitting={isSubmittingInterview} />
             </ModalDialog>
           )}
         </div>
 
         <div className="detail-column detail-column-right">
-           <div className="cv-viewer-section card-style">
+            <div className="cv-viewer-section card-style">
              <h3>CV Document</h3>
              {cvUrl && candidate?.cv_original_filename ? (
                 candidate.cv_original_filename.toLowerCase().endsWith('.pdf') ? (
-                    <CVViewer
-                        fileUrl={cvUrl}
-                        onError={(errMsg) => {
-                            setError(prev => `${prev ? prev + '\n' : ''}CV Preview Error: Could not load PDF. You can try downloading it.`);
-                        }}
-                    />
+                    <CVViewer fileUrl={cvUrl} onError={(errMsg) => { setError(prev => `${prev ? prev + '\n' : ''}CV Preview Error: Could not load PDF. You can try downloading it.`); }} />
                 ) : (
                     <div className="cv-download-link" style={{padding: '1rem', border: '1px solid #ddd', borderRadius: '4px', textAlign: 'center', backgroundColor: '#f9f9f9'}}>
                         <p style={{fontWeight: 'bold', marginBottom: '0.5rem'}}>{candidate.cv_original_filename}</p>
                         <p style={{fontSize: '0.9em', marginBottom: '1rem'}}>Preview is not available for this file type (.${candidate.cv_original_filename.split('.').pop()}).</p>
-                        <a
-                            href={cvUrl}
-                            download={candidate.cv_original_filename}
-                            className="button-action button-primary"
-                            style={{textDecoration: 'none', padding: '8px 15px'}}
-                        >
-                            Download CV
-                        </a>
+                        <a href={cvUrl} download={candidate.cv_original_filename} className="button-action button-primary" style={{textDecoration: 'none', padding: '8px 15px'}}> Download CV </a>
                     </div>
                 )
              ) : (
