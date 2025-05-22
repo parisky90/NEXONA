@@ -11,7 +11,6 @@ import companyAdminService from '../services/companyAdminService';
 import Select from 'react-select';
 import './CandidateDetailPage.css';
 
-// --- HELPER FUNCTIONS ---
 const getConfirmationStatusInfo = (confirmationStatus) => {
     if (!confirmationStatus) return { text: '', color: 'grey', className: 'status-unknown' };
     switch (confirmationStatus) {
@@ -39,7 +38,6 @@ const formatObjectListDisplay = (objectList, nameKey = 'name') => {
     }
     return objectList.map(item => item && item[nameKey] ? item[nameKey] : 'Unnamed').join(', ');
 };
-// --- END HELPER FUNCTIONS ---
 
 function CandidateDetailPage() {
   const { candidateId } = useParams();
@@ -47,7 +45,7 @@ function CandidateDetailPage() {
   const { currentUser } = useAuth();
 
   const [candidate, setCandidate] = useState(null);
-  const [cvUrl, setCvUrl] = useState(null);
+  // const [cvUrl, setCvUrl] = useState(null); // No longer needed as candidate object will have cv_url and cv_pdf_url
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -62,9 +60,7 @@ function CandidateDetailPage() {
   const [allCompanyBranches, setAllCompanyBranches] = useState([]);
   const [isLoadingCompanyBranches, setIsLoadingCompanyBranches] = useState(false);
 
-  // --- ΝΕΟ STATE ΓΙΑ ΤΗΝ ΠΡΟΕΤΟΙΜΑΣΙΑ ΤΗΣ ΠΡΟΣΦΟΡΑΣ ---
   const [isPreparingOffer, setIsPreparingOffer] = useState(false);
-  // ----------------------------------------------------
 
   const initialFormDataState = {
     first_name: '', last_name: '', email: '', phone_number: '', age: '',
@@ -112,23 +108,33 @@ function CandidateDetailPage() {
     });
   }, []);
 
-  const fetchCandidateData = useCallback(async () => {
-    setIsLoading(true); setError(null);
+  const fetchCandidateData = useCallback(async (showLoading = true) => {
+    if(showLoading) setIsLoading(true); 
+    setError(null);
     try {
       const detailsRes = await apiClient.get(`/candidate/${candidateId}`);
-      setCandidate(detailsRes.data);
+      setCandidate(detailsRes.data); // This will now include cv_pdf_url, is_docx etc.
       initializeFormData(detailsRes.data);
-      setCvUrl(detailsRes.data?.cv_url || null);
+      // setCvUrl(detailsRes.data?.cv_url || null); // No longer needed to set cvUrl separately
+      console.log("Fetched candidate data:", detailsRes.data);
     } catch (err) {
       console.error("Fetch candidate error:", err.response || err);
       setError(err.response?.data?.error || 'Failed to load candidate details.');
-      setCandidate(null); setCvUrl(null);
+      setCandidate(null); 
+      // setCvUrl(null);
     } finally {
-      setIsLoading(false);
+      if(showLoading) setIsLoading(false);
     }
   }, [candidateId, initializeFormData]);
 
   useEffect(() => { fetchCandidateData(); }, [fetchCandidateData]);
+  
+  // Function to be passed to CVViewer for refresh button
+  const handleCvRefresh = () => {
+    console.log("CandidateDetailPage: Refreshing candidate data to check for PDF conversion...");
+    fetchCandidateData(false); // Fetch without setting global loading to true
+  };
+
 
   useEffect(() => {
     const companyIdForFetch = candidate?.company_id;
@@ -223,7 +229,7 @@ function CandidateDetailPage() {
       const response = await apiClient.put(`/candidate/${candidate.candidate_id}`, payload);
       setCandidate(response.data);
       initializeFormData(response.data);
-      setCvUrl(response.data?.cv_url || null);
+      // setCvUrl(response.data?.cv_url || null); // Not needed
       setEditMode(false); 
       return response.data;
     } catch (err) {
@@ -394,9 +400,7 @@ function CandidateDetailPage() {
     try {
         await sendUpdateRequest(payload); 
         setIsPreparingOffer(false); 
-    } catch (err) {
-        // Error already handled by sendUpdateRequest
-    }
+    } catch (err) { /* Error handled by sendUpdateRequest */ }
   };
 
   const handleOfferAccepted = () => handleUpdateStatus('Hired');
@@ -410,9 +414,9 @@ function CandidateDetailPage() {
   };
 
   if (isLoading && !candidate) return <div className="loading-placeholder card-style">Loading candidate details...</div>;
-  if (error && !candidate && !isUpdating && !isSubmittingInterview) return <div className="error-message card-style">Error: {error} <button onClick={fetchCandidateData} className="button-action button-secondary">Retry</button></div>;
+  if (error && !candidate && !isUpdating && !isSubmittingInterview) return <div className="error-message card-style">Error: {error} <button onClick={() => fetchCandidateData()} className="button-action button-secondary">Retry</button></div>;
   if (!candidate && !isLoading) return <div className="card-style">Candidate not found or data unavailable. <Link to="/dashboard">Go to Dashboard</Link></div>;
-  if (!candidate) return null;
+  if (!candidate) return null; // Should be caught by above, but defensive
 
   const candidateResponseInfo = getConfirmationStatusInfo(candidate.candidate_confirmation_status);
   const latestScheduledInterview = candidate.interviews?.filter(inv => inv.status === 'SCHEDULED').sort((a,b) => new Date(b.created_at) - new Date(a.created_at))[0];
@@ -423,7 +427,6 @@ function CandidateDetailPage() {
 
   const branchOptionsForSelect = allCompanyBranches.map(branch => ({ value: branch.id, label: branch.name }));
   const positionOptionsForSelect = companyOpenPositions.map(pos => ({ value: pos.position_id, label: pos.position_name }));
-
 
   return (
     <div className="candidate-detail-page">
@@ -449,6 +452,7 @@ function CandidateDetailPage() {
         <div className="detail-column detail-column-left">
           <h3>Candidate Information</h3>
           <div className="info-grid">
+            {/* ... (other form fields remain the same) ... */}
             <div className="info-item"><label>First Name:</label>{editMode ? <input type="text" name="first_name" value={formData.first_name} onChange={handleInputChange} className="input-light-gray"/> : <span>{candidate.first_name || 'N/A'}</span>}</div>
             <div className="info-item"><label>Last Name:</label>{editMode ? <input type="text" name="last_name" value={formData.last_name} onChange={handleInputChange} className="input-light-gray"/> : <span>{candidate.last_name || 'N/A'}</span>}</div>
             <div className="info-item"><label>Email:</label>{editMode ? <input type="email" name="email" value={formData.email} onChange={handleInputChange} className="input-light-gray"/> : <span>{candidate.email || 'N/A'}</span>}</div>
@@ -553,13 +557,13 @@ function CandidateDetailPage() {
                         <button 
                             onClick={() => {
                                 setIsPreparingOffer(true); 
-                                if (!editMode) { setEditMode(true); initializeFormData(candidate); } // Initialize if not already editing
+                                if (!editMode) { setEditMode(true); initializeFormData(candidate); }
                                 const currentCandOffers = candidate?.offers && candidate.offers.length > 0 ?
                                     candidate.offers.map(o => ({...o, offer_amount: o.offer_amount ?? '', offer_date: o.offer_date ? o.offer_date.split('T')[0] : new Date().toISOString().split('T')[0]}))
                                     : [{ offer_amount: '', offer_notes: '', offer_date: new Date().toISOString().split('T')[0] }];
                                 
                                 const offersForFormDisplay = formData.offers && formData.offers.length > 0 ? formData.offers : currentCandOffers;
-                                if (offersForFormDisplay.length === 0) { // Ensure at least one offer field if none exist
+                                if (offersForFormDisplay.length === 0) { 
                                      offersForFormDisplay.push({ offer_amount: '', offer_notes: '', offer_date: new Date().toISOString().split('T')[0] });
                                 }
                                 setFormData(prev => ({ ...prev, offers: offersForFormDisplay }));
@@ -613,32 +617,25 @@ function CandidateDetailPage() {
 
            {showRecruiterCancelModal && ( <ModalDialog isOpen={showRecruiterCancelModal} onClose={() => setShowRecruiterCancelModal(false)} title="Cancel Interview (by Recruiter)"> <div className="recruiter-cancel-form"> <p>You are about to cancel the interview for <strong>{candidate?.first_name} {candidate?.last_name}</strong>.</p> <p style={{fontSize: '0.9em', marginBottom:'10px'}}>Current Interview ID: {latestScheduledInterview?.id || latestProposedInterview?.id}</p> <label htmlFor="cancellationReasonByRecruiter">Reason for cancellation (optional, will be logged and sent to candidate):</label> <textarea id="cancellationReasonByRecruiter" value={cancellationReasonByRecruiter} onChange={(e) => setCancellationReasonByRecruiter(e.target.value)} rows="3" style={{width: '100%', marginBottom: '15px', border:'1px solid #ccc', borderRadius:'4px', padding:'8px'}} /> {error && <p className="error-message" style={{color: 'red', marginBottom:'10px'}}>{error}</p>} <div style={{textAlign: 'right'}}> <button onClick={() => setShowRecruiterCancelModal(false)} className="button-action button-secondary" disabled={isUpdating} style={{marginRight: '10px'}}>Back</button> <button onClick={handleConfirmRecruiterCancelInterview} className="button-action button-danger" disabled={isUpdating}> {isUpdating ? 'Cancelling...' : 'Confirm Cancellation'} </button> </div> </div> </ModalDialog> )}
           {showProposalModal && candidate && ( <ModalDialog isOpen={showProposalModal} onClose={() => setShowProposalModal(false)} title={`Propose Interview for ${candidate.first_name || ''} ${candidate.last_name || ''}`.trim()}> <InterviewProposalForm candidateId={candidate.candidate_id} companyPositions={companyOpenPositions} onSubmit={handleSendInterviewProposal} onCancel={() => setShowProposalModal(false)} isSubmitting={isSubmittingInterview} /> </ModalDialog> )}
-        </div> {/* End of detail-column-left */}
+        </div> 
 
         <div className="detail-column detail-column-right">
             <div className="cv-viewer-section card-style">
              <h3>CV Document</h3>
-             {cvUrl && candidate?.cv_original_filename ? (
-                candidate.cv_original_filename.toLowerCase().endsWith('.pdf') ? (
-                    <CVViewer fileUrl={cvUrl} onError={(errMsg) => { setError(prev => `${prev ? prev + '\n' : ''}CV Preview Error: Could not load PDF. You can try downloading it.`); }} />
-                ) : (
-                    <div className="cv-download-link" style={{padding: '1rem', border: '1px solid #ddd', borderRadius: '4px', textAlign: 'center', backgroundColor: '#f9f9f9'}}>
-                        <p style={{fontWeight: 'bold', marginBottom: '0.5rem'}}>{candidate.cv_original_filename}</p>
-                        <p style={{fontSize: '0.9em', marginBottom: '1rem'}}>Preview is not available for this file type (.${candidate.cv_original_filename.split('.').pop()}).</p>
-                        <a href={cvUrl} download={candidate.cv_original_filename} className="button-action button-primary" style={{textDecoration: 'none', padding: '8px 15px'}}> Download CV </a>
-                    </div>
-                )
-             ) : (
-                <p>{candidate && candidate.cv_storage_path ? 'Loading CV...' : (candidate?.current_status === 'ParsingFailed' && !candidate.cv_storage_path ? 'CV parsing failed and no CV file seems to be stored.' : (candidate?.current_status === 'ParsingFailed' ? 'CV parsing may have failed or CV is not viewable.' : 'No CV uploaded or available.'))}</p>
-             )}
+             {/* --- ΕΝΗΜΕΡΩΣΗ ΓΙΑ CVVIEWER --- */}
+             <CVViewer 
+                candidate={candidate} 
+                onCvRefreshNeeded={handleCvRefresh} 
+             />
+             {/* ----------------------------- */}
            </div>
            <div className="history-log-section card-style">
              <h3>Candidate History</h3>
              <HistoryLog history={candidate?.history || []} />
            </div>
-        </div> {/* End of detail-column-right */}
-      </div> {/* End of detail-content */}
-    </div> /* End of candidate-detail-page */
+        </div> 
+      </div> 
+    </div> 
   );
 }
 

@@ -7,13 +7,15 @@ from app.models import (
     User, Company, Candidate, Position, CompanySettings,
     Interview, InterviewStatus, InterviewSlot, Branch
 )
-from datetime import datetime, timedelta, timezone as dt_timezone
+from datetime import datetime, timezone as dt_timezone, timedelta
 from zoneinfo import ZoneInfo
 import uuid
 import secrets
 from sqlalchemy import func, exc
 from sqlalchemy.orm.attributes import flag_modified
-from markupsafe import escape  # Για την ασφαλή εμφάνιση του λόγου απόρριψης
+from markupsafe import escape
+
+from app.tasks.conversion import convert_docx_to_pdf_task  # Import the new task
 
 bp = Blueprint('api', __name__, url_prefix='/api/v1')
 
@@ -60,7 +62,7 @@ def register():
             'message': 'User and company registered successfully. User logged in.',
             'user': user_info
         }), 201
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error during registration for user '{username}' or company '{company_name}': {e}",
                                  exc_info=True)
@@ -121,7 +123,7 @@ def dashboard_summary():
                 company_id_to_filter = int(company_id_param_str)
                 if not db.session.get(Company, company_id_to_filter):
                     return jsonify({"error": f"Company with ID {company_id_to_filter} not found."}), 404
-            except ValueError:  # pragma: no cover
+            except ValueError:
                 return jsonify({"error": f"Invalid company_id format: {company_id_param_str}"}), 400
     else:
         company_id_to_filter = current_user.company_id
@@ -204,9 +206,11 @@ def upload_cv():
     if 'cv_file' not in request.files: return jsonify({'error': 'No "cv_file" part in the request'}), 400
     file = request.files['cv_file']
     if file.filename == '': return jsonify({'error': 'No selected file'}), 400
+
     if current_user.role != 'superadmin' and not current_user.company_id:
         current_app.logger.warning(f"User {current_user.id} without company_id tried to upload CV.")
         return jsonify({'error': 'User not associated with a company, cannot upload CVs'}), 403
+
     target_company_id = None
     if current_user.role == 'superadmin':
         company_id_for_upload_str = request.form.get('company_id_for_upload')
@@ -215,47 +219,71 @@ def upload_cv():
                 target_company_id = int(company_id_for_upload_str)
                 if not db.session.get(Company, target_company_id): return jsonify(
                     {'error': f'Target company ID {target_company_id} not found.'}), 404
-            except ValueError:  # pragma: no cover
+            except ValueError:
                 return jsonify({'error': 'Invalid company_id_for_upload format.'}), 400
-        else:  # pragma: no cover
+        else:
             return jsonify({'error': 'Superadmin must specify a target company ID for upload.'}), 400
     else:
         target_company_id = current_user.company_id
-    if not target_company_id:  # pragma: no cover
+
+    if not target_company_id:
         current_app.logger.error(f"Could not determine target_company_id for CV upload by user {current_user.id}")
         return jsonify({'error': 'Target company could not be determined for CV upload.'}), 500
+
     if file:
         filename = secure_filename(file.filename)
         file_content_bytes = file.read()
+        file.seek(0)
+
+        original_content_type = file.content_type
+        current_app.logger.debug(
+            f"CV Upload: Original filename: '{filename}', Content-Type from request: '{original_content_type}'")
+
         position_name_from_form = request.form.get('position', None)
         branch_ids_str = request.form.get('branch_ids', '')
         position_ids_str = request.form.get('position_ids', '')
+
         branch_ids_int = []
         if branch_ids_str:
             try:
                 branch_ids_int = [int(b_id.strip()) for b_id in branch_ids_str.split(',') if b_id.strip().isdigit()]
-            except ValueError:  # pragma: no cover
+            except ValueError:
                 current_app.logger.warning(f"Invalid branch_ids format received: {branch_ids_str}")
+
         position_ids_int = []
         if position_ids_str:
             try:
                 position_ids_int = [int(p_id.strip()) for p_id in position_ids_str.split(',') if p_id.strip().isdigit()]
-            except ValueError:  # pragma: no cover
+            except ValueError:
                 current_app.logger.warning(f"Invalid position_ids format received: {position_ids_str}")
+
         try:
             file_key = f"cvs/{target_company_id}/{uuid.uuid4()}_{filename}"
-            upload_success_key = s3_service_instance.upload_file_obj(file_obj_content_bytes=file_content_bytes,
-                                                                     object_name=file_key,
-                                                                     ContentType=file.content_type)
-            if not upload_success_key:  # pragma: no cover
+
+            upload_success_key = s3_service_instance.upload_file_obj(
+                file_obj_content_bytes=file_content_bytes,
+                object_name=file_key,
+                ContentType=original_content_type
+            )
+
+            if not upload_success_key:
                 current_app.logger.error(
                     f"S3 upload failed for {filename} by user {current_user.id} for company {target_company_id}.")
                 return jsonify({'error': 'Failed to upload file to S3 storage.'}), 500
+
             placeholder_email = f"placeholder-{uuid.uuid4()}@example.com"
-            new_candidate = Candidate(company_id=target_company_id, cv_original_filename=filename,
-                                      cv_storage_path=file_key, current_status='Processing', email=placeholder_email)
-            db.session.add(new_candidate);
+
+            new_candidate = Candidate(
+                company_id=target_company_id,
+                cv_original_filename=filename,
+                cv_storage_path=upload_success_key,
+                cv_content_type=original_content_type,
+                current_status='Processing',
+                email=placeholder_email
+            )
+            db.session.add(new_candidate)
             db.session.flush()
+
             assigned_position_names_log = []
             if position_ids_int:
                 positions_to_assign = Position.query.filter(Position.position_id.in_(position_ids_int),
@@ -263,21 +291,16 @@ def upload_cv():
                 for pos in positions_to_assign:
                     if pos not in new_candidate.positions: new_candidate.positions.append(
                         pos); assigned_position_names_log.append(pos.position_name)
-                current_app.logger.info(
-                    f"Associated candidate {new_candidate.candidate_id} with positions by ID: {assigned_position_names_log}")
-            elif position_name_from_form and position_name_from_form.strip():  # pragma: no cover
+            elif position_name_from_form and position_name_from_form.strip():
                 position_obj = Position.query.filter_by(company_id=target_company_id,
                                                         position_name=position_name_from_form.strip()).first()
                 if not position_obj:
                     position_obj = Position(company_id=target_company_id, position_name=position_name_from_form.strip(),
                                             status="Open")
                     db.session.add(position_obj)
-                    current_app.logger.info(
-                        f"Created new ad-hoc position '{position_obj.position_name}' for company {target_company_id} during CV upload.")
                 if position_obj not in new_candidate.positions: new_candidate.positions.append(
                     position_obj); assigned_position_names_log.append(position_obj.position_name)
-                current_app.logger.info(
-                    f"Associated candidate {new_candidate.candidate_id} with ad-hoc position: {position_obj.position_name}")
+
             assigned_branch_names_log = []
             if branch_ids_int:
                 branches_to_assign = Branch.query.filter(Branch.id.in_(branch_ids_int),
@@ -285,40 +308,67 @@ def upload_cv():
                 for branch in branches_to_assign:
                     if branch not in new_candidate.branches: new_candidate.branches.append(
                         branch); assigned_branch_names_log.append(branch.name)
-                current_app.logger.info(
-                    f"Associated candidate {new_candidate.candidate_id} with branches by ID: {assigned_branch_names_log}")
-            history_details = {"s3_key": file_key, "original_filename": filename, "branch_ids_applied": branch_ids_int,
-                               "branches_applied_names": assigned_branch_names_log,
-                               "position_ids_applied": position_ids_int,
-                               "positions_applied_names": assigned_position_names_log,
-                               "ad_hoc_position_name_given": position_name_from_form if not position_ids_int and position_name_from_form else None}
+
+            history_details = {
+                "s3_key": upload_success_key,
+                "original_filename": filename,
+                "content_type": original_content_type,
+                "branch_ids_applied": branch_ids_int,
+                "branches_applied_names": assigned_branch_names_log,
+                "position_ids_applied": position_ids_int,
+                "positions_applied_names": assigned_position_names_log,
+                "ad_hoc_position_name_given": position_name_from_form if not position_ids_int and position_name_from_form else None
+            }
             new_candidate.add_history_event(event_type="CV_UPLOADED",
                                             description=f"CV '{filename}' uploaded by {current_user.username}.",
                                             actor_id=current_user.id, details=history_details)
             db.session.commit()
-            if current_app.config.get('TEXTKERNEL_ENABLED', False):  # pragma: no cover
-                celery.send_task('app.tasks.parsing.parse_cv_task',
-                                 args=[str(new_candidate.candidate_id), file_key, target_company_id])
+
+            # --- DEBUGGING ΓΙΑ DOCX CONVERSION ---
+            current_app.logger.info(f"[UPLOAD_CV_DEBUG] Candidate ID: {new_candidate.candidate_id}")
+            current_app.logger.info(f"[UPLOAD_CV_DEBUG] Original Filename: {new_candidate.cv_original_filename}")
+            current_app.logger.info(f"[UPLOAD_CV_DEBUG] Content-Type from model: {new_candidate.cv_content_type}")
+            current_app.logger.info(f"[UPLOAD_CV_DEBUG] Is DOCX property: {new_candidate.is_docx}")
+            # --- ΤΕΛΟΣ DEBUGGING ---
+
+            if new_candidate.is_docx:
+                current_app.logger.info(
+                    f"CV for candidate {new_candidate.candidate_id} IS DOCX. Scheduling conversion task.")
+                convert_docx_to_pdf_task.delay(
+                    str(new_candidate.candidate_id),
+                    new_candidate.cv_storage_path,
+                    new_candidate.cv_original_filename
+                )
             else:
-                new_candidate.current_status = 'NeedsReview'
-                new_candidate.add_history_event(event_type="PARSING_SKIPPED",
-                                                description="Textkernel parsing is disabled. Manual review needed.")
-                db.session.commit()
+                current_app.logger.info(
+                    f"CV for candidate {new_candidate.candidate_id} is NOT DOCX (type from model: {new_candidate.cv_content_type}, filename: {new_candidate.cv_original_filename}). Skipping conversion task.")
+
+            if current_app.config.get('TEXTKERNEL_ENABLED', False):
+                celery.send_task('app.tasks.parsing.parse_cv_task',
+                                 args=[str(new_candidate.candidate_id), upload_success_key, target_company_id])
+            else:
+                if new_candidate.current_status == 'Processing':
+                    new_candidate.current_status = 'NeedsReview'
+                    new_candidate.add_history_event(event_type="PARSING_SKIPPED",
+                                                    description="Textkernel parsing is disabled. Manual review needed.")
+                    db.session.commit()
+
             return jsonify({'message': 'CV uploaded successfully. Processing...',
                             'candidate_id': str(new_candidate.candidate_id)}), 201
-        except exc.IntegrityError as ie:  # pragma: no cover
+        except exc.IntegrityError as ie:
             db.session.rollback();
             current_app.logger.error(f"Integrity error during CV upload: {ie}",
                                      exc_info=True);
             return jsonify(
                 {'error': 'A database conflict occurred. Please try again.'}), 409
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             db.session.rollback();
             current_app.logger.error(f"Error during CV upload or candidate creation: {e}",
                                      exc_info=True);
             return jsonify(
                 {'error': f'Failed to upload CV: {str(e)}'}), 500
-    return jsonify({'error': 'File processing error.'}), 400  # pragma: no cover
+
+    return jsonify({'error': 'File processing error.'}), 400
 
 
 @bp.route('/candidates', methods=['GET'], endpoint='get_all_candidates_main')
@@ -334,7 +384,7 @@ def get_candidates(status_in_path=None):
     query = Candidate.query
     if current_user.role == 'superadmin':
         company_id_param = request.args.get('company_id', type=int)
-        if company_id_param:  # pragma: no cover
+        if company_id_param:
             if not db.session.get(Company, company_id_param): return jsonify(
                 {"error": f"Company with ID {company_id_param} not found."}), 404
             query = query.filter(Candidate.company_id == company_id_param)
@@ -350,12 +400,13 @@ def get_candidates(status_in_path=None):
     query = query.order_by(Candidate.submission_date.desc())
     try:
         pagination = query.paginate(page=page, per_page=per_page, error_out=False)
-        candidates_data = [candidate_obj.to_dict(include_history=True, include_interviews=True, include_cv_url=True,
-                                                 include_branches=True) for candidate_obj in pagination.items]
+        candidates_data = [
+            candidate_obj.to_dict(include_history=True, include_interviews=True, include_cv_url=True, cv_url_param=None,
+                                  include_branches=True) for candidate_obj in pagination.items]
         return jsonify(
             {'candidates': candidates_data, 'total_results': pagination.total, 'total_pages': pagination.pages,
              'current_page': pagination.page, 'has_next': pagination.has_next, 'has_prev': pagination.has_prev}), 200
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         current_app.logger.error(f"Error during candidate pagination: {e}", exc_info=True);
         return jsonify(
             {'error': 'Error fetching candidates list.'}), 500
@@ -366,15 +417,15 @@ def get_candidates(status_in_path=None):
 def get_candidate_detail(candidate_uuid):
     try:
         candidate_id_obj = uuid.UUID(candidate_uuid)
-    except ValueError:  # pragma: no cover
+    except ValueError:
         return jsonify({'error': 'Invalid candidate UUID format'}), 400
     candidate = db.session.get(Candidate, candidate_id_obj)
     if not candidate: return jsonify({'error': 'Candidate not found'}), 404
     if current_user.role != 'superadmin' and current_user.company_id != candidate.company_id: return jsonify(
-        # pragma: no cover
         {'error': 'Forbidden: You do not have permission to view this candidate'}), 403
-    return jsonify(candidate.to_dict(include_history=True, include_interviews=True, include_cv_url=True,
-                                     include_branches=True)), 200
+    return jsonify(
+        candidate.to_dict(include_history=True, include_interviews=True, include_cv_url=True, cv_url_param=None,
+                          include_branches=True)), 200
 
 
 @bp.route('/candidate/<string:candidate_uuid>', methods=['PUT'])
@@ -382,18 +433,18 @@ def get_candidate_detail(candidate_uuid):
 def update_candidate_detail(candidate_uuid):
     try:
         candidate_id_obj = uuid.UUID(candidate_uuid)
-    except ValueError:  # pragma: no cover
+    except ValueError:
         return jsonify({'error': 'Invalid candidate UUID format'}), 400
 
     candidate = db.session.get(Candidate, candidate_id_obj)
     if not candidate:
         return jsonify({'error': 'Candidate not found'}), 404
 
-    if current_user.role != 'superadmin' and current_user.company_id != candidate.company_id:  # pragma: no cover
+    if current_user.role != 'superadmin' and current_user.company_id != candidate.company_id:
         return jsonify({'error': 'Forbidden: You do not have permission to update this candidate'}), 403
 
     data = request.get_json()
-    if not data:  # pragma: no cover
+    if not data:
         return jsonify({'error': 'No data provided for update'}), 400
 
     allowed_fields = [
@@ -413,15 +464,11 @@ def update_candidate_detail(candidate_uuid):
     current_app.logger.debug(f"Old status: {old_status_for_log}, New status from payload: {new_status_from_payload}")
 
     if new_status_from_payload == 'OfferMade' and old_status_for_log != 'OfferMade':
-        # Check if this specific offer has already been accepted/declined to prevent re-sending email for same offer action
-        # This is a simplified check. A more robust system might track offer versions or specific offer IDs.
-        if candidate.current_status not in ['Hired',
-                                            'Declined']:  # Only generate new token if not already actioned from a previous offer
+        if candidate.current_status not in ['Hired', 'Declined']:
             offer_made_in_this_update = True
             candidate.offer_acceptance_token = secrets.token_urlsafe(32)
             candidate.offer_acceptance_token_expiration = datetime.now(dt_timezone.utc) + timedelta(
-                days=current_app.config.get('INTERVIEW_TOKEN_EXPIRATION_DAYS',
-                                            7))  # TODO: Use a specific OFFER_TOKEN_EXPIRATION_DAYS
+                days=current_app.config.get('INTERVIEW_TOKEN_EXPIRATION_DAYS', 7))
             updated_fields_log['offer_acceptance_token'] = {'old': candidate.offer_acceptance_token, 'new': 'generated'}
             current_app.logger.info(
                 f"Offer token generated for candidate {candidate.candidate_id} upon status change to OfferMade.")
@@ -469,7 +516,7 @@ def update_candidate_detail(candidate_uuid):
             if new_status_from_payload == 'NeedsReview' and \
                     old_status_for_log in ['Declined', 'Rejected', 'ParsingFailed', 'Hired', 'OfferMade'] and \
                     field in ['notes', 'hr_comments'] and \
-                    field not in data:  # pragma: no cover
+                    field not in data:
                 current_app.logger.debug(
                     f"Re-evaluation: Skipping update for '{field}' as it was not in payload, retaining existing value.")
                 continue
@@ -482,7 +529,7 @@ def update_candidate_detail(candidate_uuid):
                 else:
                     try:
                         new_value = int(new_value)
-                    except ValueError:  # pragma: no cover
+                    except ValueError:
                         return jsonify({'error': f'Invalid value for age: {data[field]} must be a number.'}), 400
             if old_value != new_value:
                 setattr(candidate, field, new_value)
@@ -493,7 +540,7 @@ def update_candidate_detail(candidate_uuid):
         current_position_names = {pos.position_name for pos in candidate.positions}
         new_position_names_from_data = {p_name.strip() for p_name in data['positions'] if
                                         isinstance(p_name, str) and p_name.strip()}
-        if current_position_names != new_position_names_from_data:  # pragma: no cover
+        if current_position_names != new_position_names_from_data:
             updated_fields_log['positions'] = {'old': sorted(list(current_position_names)),
                                                'new': sorted(list(new_position_names_from_data))}
             new_positions_for_candidate = []
@@ -508,7 +555,7 @@ def update_candidate_detail(candidate_uuid):
         old_offers_for_log = candidate.offers if candidate.offers else []
         new_offers_for_db = []
         for offer_data_from_frontend in data['offers']:
-            if not isinstance(offer_data_from_frontend, dict): continue  # pragma: no cover
+            if not isinstance(offer_data_from_frontend, dict): continue
             processed_offer_for_db = {}
             offer_amount_val = offer_data_from_frontend.get('offer_amount')
             if offer_amount_val == '' or offer_amount_val is None:
@@ -516,7 +563,7 @@ def update_candidate_detail(candidate_uuid):
             else:
                 try:
                     processed_offer_for_db['offer_amount'] = float(offer_amount_val)
-                except (ValueError, TypeError):  # pragma: no cover
+                except (ValueError, TypeError):
                     processed_offer_for_db['offer_amount'] = None
             processed_offer_for_db['offer_notes'] = offer_data_from_frontend.get('offer_notes', '').strip()
             offer_date_str = offer_data_from_frontend.get('offer_date')
@@ -526,22 +573,22 @@ def update_candidate_detail(candidate_uuid):
                         standardized_date_str = offer_date_str.split('.')[0]
                         if 'Z' in standardized_date_str:
                             dt_obj_utc = datetime.fromisoformat(standardized_date_str.replace('Z', '+00:00'))
-                        elif '+' in standardized_date_str[10:] or '-' in standardized_date_str[10:]:  # pragma: no cover
+                        elif '+' in standardized_date_str[10:] or '-' in standardized_date_str[10:]:
                             dt_obj_utc = datetime.fromisoformat(standardized_date_str)
-                        else:  # pragma: no cover
+                        else:
                             try:
                                 dt_obj_naive = datetime.strptime(standardized_date_str, "%Y-%m-%dT%H:%M:%S")
                             except ValueError:
                                 dt_obj_naive = datetime.strptime(standardized_date_str, "%Y-%m-%dT%H:%M")
                             if dt_obj_naive.tzinfo is None:
                                 dt_obj_utc = dt_obj_naive.replace(tzinfo=dt_timezone.utc)
-                            else:  # pragma: no cover
+                            else:
                                 dt_obj_utc = dt_obj_naive.astimezone(dt_timezone.utc)
                     else:
                         dt_obj_naive = datetime.strptime(offer_date_str, "%Y-%m-%d")
                         dt_obj_utc = dt_obj_naive.replace(tzinfo=dt_timezone.utc)
                     processed_offer_for_db['offer_date'] = dt_obj_utc.isoformat()
-                except ValueError as ve:  # pragma: no cover
+                except ValueError as ve:
                     current_app.logger.warning(
                         f"Could not parse offer_date_str: '{offer_date_str}'. Error: {ve}. Setting to None.");
                     processed_offer_for_db['offer_date'] = None
@@ -561,7 +608,7 @@ def update_candidate_detail(candidate_uuid):
         for b_id in data['branch_ids']:
             try:
                 new_branch_ids_from_data.add(int(b_id))
-            except (ValueError, TypeError):  # pragma: no cover
+            except (ValueError, TypeError):
                 current_app.logger.warning(f"Invalid branch ID '{b_id}' for candidate {candidate_uuid}.")
         if current_branch_ids != new_branch_ids_from_data:
             updated_fields_log['branches'] = {'old_ids': sorted(list(current_branch_ids)),
@@ -574,7 +621,7 @@ def update_candidate_detail(candidate_uuid):
             candidate.branches = new_branches_for_candidate
 
     if not updated_fields_log and not offer_made_in_this_update:
-        if not status_changed:  # pragma: no cover
+        if not status_changed:
             return jsonify({'message': 'No changes detected or no updatable fields provided.'}), 200
 
     history_description = f"Candidate details updated by {current_user.username}."
@@ -586,8 +633,8 @@ def update_candidate_detail(candidate_uuid):
             history_description = f"Status changed by {current_user.username} from '{old_status_for_log}' to '{candidate.current_status}'."
         other_changes_keys = set(updated_fields_log.keys()) - {'current_status', 're_evaluation_specific_resets',
                                                                'offer_acceptance_token'}
-        if other_changes_keys: history_description += " Other details also updated."  # pragma: no cover
-    elif updated_fields_log:  # pragma: no cover
+        if other_changes_keys: history_description += " Other details also updated."
+    elif updated_fields_log:
         history_description = f"Candidate details (non-status) updated by {current_user.username}."
 
     candidate.add_history_event(
@@ -603,25 +650,24 @@ def update_candidate_detail(candidate_uuid):
     try:
         db.session.commit()
         if offer_made_in_this_update:
-            # Πάρε το τελευταίο offer που προστέθηκε ή ενημερώθηκε για να το στείλεις στο email
             last_offer_details_for_email = candidate.offers[-1] if (
-                        candidate.offers and isinstance(candidate.offers, list) and len(candidate.offers) > 0) else {}
+                    candidate.offers and isinstance(candidate.offers, list) and len(candidate.offers) > 0) else {}
             celery.send_task('app.tasks.communication.send_offer_made_email_to_candidate_task',
                              args=[str(candidate.candidate_id), last_offer_details_for_email])
         elif status_changed and candidate.current_status == 'Hired':
             celery.send_task('app.tasks.communication.send_hired_confirmation_email_to_candidate_task',
                              args=[str(candidate.candidate_id)])
         elif status_changed and candidate.current_status == 'Declined' and old_status_for_log == 'OfferMade':
-            # Εδώ, ο recruiter αλλάζει το status, οπότε δεν υπάρχει λόγος από τον υποψήφιο ακόμα.
             celery.send_task('app.tasks.communication.send_offer_declined_notification_to_recruiter_task',
                              args=[str(candidate.candidate_id), "Offer marked as Declined by recruiter."])
 
         updated_candidate_data = db.session.get(Candidate, candidate_id_obj).to_dict(include_history=True,
                                                                                      include_interviews=True,
                                                                                      include_cv_url=True,
+                                                                                     cv_url_param=None,
                                                                                      include_branches=True)
         return jsonify(updated_candidate_data), 200
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         db.session.rollback();
         current_app.logger.error(f"Error updating candidate {candidate_uuid}: {e}", exc_info=True)
         return jsonify({'error': f'Failed to update candidate: {str(e)}'}), 500
@@ -632,35 +678,50 @@ def update_candidate_detail(candidate_uuid):
 def delete_candidate(candidate_uuid):
     try:
         candidate_id_obj = uuid.UUID(candidate_uuid)
-    except ValueError:  # pragma: no cover
+    except ValueError:
         return jsonify({'error': 'Invalid candidate UUID format'}), 400
     candidate = db.session.get(Candidate, candidate_id_obj)
     if not candidate: return jsonify({'error': 'Candidate not found'}), 404
     can_delete = False
-    if current_user.role == 'superadmin':  # pragma: no cover
+    if current_user.role == 'superadmin':
         can_delete = True
     elif current_user.role == 'company_admin' and current_user.company_id == candidate.company_id:
         can_delete = True
     if not can_delete: return jsonify(
-        {'error': 'Forbidden: You do not have permission to delete this candidate'}), 403  # pragma: no cover
-    s3_path_to_delete = candidate.cv_storage_path;
+        {'error': 'Forbidden: You do not have permission to delete this candidate'}), 403
+
+    s3_path_to_delete = candidate.cv_storage_path
+    s3_pdf_path_to_delete = candidate.cv_pdf_storage_key
     candidate_full_name_for_log = candidate.full_name
+
     try:
-        db.session.delete(candidate);
+        db.session.delete(candidate)
         db.session.commit()
         current_app.logger.info(
             f"Candidate {candidate_uuid} ('{candidate_full_name_for_log}') deleted by user {current_user.username} (ID: {current_user.id}).")
-        if s3_path_to_delete:  # pragma: no cover
+
+        if s3_path_to_delete:
             try:
-                s3_service_instance.delete_file(s3_path_to_delete);
+                s3_service_instance.delete_file(s3_path_to_delete)
                 current_app.logger.info(
-                    f"Successfully deleted CV {s3_path_to_delete} from S3 for deleted candidate {candidate_uuid}")
+                    f"Successfully deleted original CV {s3_path_to_delete} from S3 for deleted candidate {candidate_uuid}")
             except Exception as s3_e:
                 current_app.logger.error(
-                    f"Failed to delete CV {s3_path_to_delete} from S3 for candidate {candidate_uuid}: {s3_e}",
+                    f"Failed to delete original CV {s3_path_to_delete} from S3 for candidate {candidate_uuid}: {s3_e}",
                     exc_info=True)
+
+        if s3_pdf_path_to_delete:
+            try:
+                s3_service_instance.delete_file(s3_pdf_path_to_delete)
+                current_app.logger.info(
+                    f"Successfully deleted PDF CV {s3_pdf_path_to_delete} from S3 for deleted candidate {candidate_uuid}")
+            except Exception as s3_pdf_e:
+                current_app.logger.error(
+                    f"Failed to delete PDF CV {s3_pdf_path_to_delete} from S3 for candidate {candidate_uuid}: {s3_pdf_e}",
+                    exc_info=True)
+
         return jsonify({'message': f"Candidate '{candidate_full_name_for_log}' deleted successfully"}), 200
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         db.session.rollback();
         current_app.logger.error(f"Error deleting candidate {candidate_uuid}: {e}",
                                  exc_info=True);
@@ -668,30 +729,39 @@ def delete_candidate(candidate_uuid):
             {'error': f'Failed to delete candidate: {str(e)}'}), 500
 
 
-# --- INTERVIEW ACTION ROUTES (παραμένουν ως έχουν από την προηγούμενη πλήρη έκδοση) ---
+# --- INTERVIEW ACTION ROUTES ---
 @bp.route('/candidates/<string:candidate_uuid>/propose-interview', methods=['POST'])
 @login_required
 def propose_interview(candidate_uuid):
-    if current_user.role not in ['company_admin', 'superadmin', 'user']: return jsonify(  # pragma: no cover
-        {'error': 'Forbidden: User does not have permission to propose interviews'}), 403
+    if current_user.role not in ['company_admin', 'superadmin', 'user', 'recruiter',
+                                 'hiring_manager']:  # Added recruiter, hiring_manager
+        return jsonify({'error': 'Forbidden: User does not have permission to propose interviews'}), 403
     try:
         candidate_id_obj = uuid.UUID(candidate_uuid)
-    except ValueError:  # pragma: no cover
+    except ValueError:
         return jsonify({'error': 'Invalid candidate UUID format'}), 400
     candidate = db.session.get(Candidate, candidate_id_obj)
     if not candidate: return jsonify({'error': 'Candidate not found'}), 404
-    if current_user.role != 'superadmin' and current_user.company_id != candidate.company_id: return jsonify(
-        # pragma: no cover
-        {'error': 'Forbidden: User cannot manage interviews for this candidate'}), 403
+
+    # Permission check: User must be superadmin OR belong to the same company as the candidate
+    if not (current_user.role == 'superadmin' or (
+            current_user.company_id and current_user.company_id == candidate.company_id)):
+        return jsonify({'error': 'Forbidden: User cannot manage interviews for this candidate'}), 403
+
     data = request.get_json();
-    if not data: return jsonify({'error': 'No data provided'}), 400  # pragma: no cover
+    if not data: return jsonify({'error': 'No data provided'}), 400
+
     existing_proposed_interviews = Interview.query.filter_by(candidate_id=candidate.candidate_id,
                                                              status=InterviewStatus.PROPOSED).all()
     cancelled_previous_proposal_ids = []
     if existing_proposed_interviews:
-        for old_interview in existing_proposed_interviews: old_interview.status = InterviewStatus.CANCELLED_BY_RECRUITER; old_interview.internal_notes = (
-                                                                                                                                                                 old_interview.internal_notes or "") + f"\nSuperseded by new proposal on {datetime.now(dt_timezone.utc).strftime('%Y-%m-%d %H:%M')} by {current_user.username}."; old_interview.updated_at = datetime.now(
-            dt_timezone.utc); cancelled_previous_proposal_ids.append(str(old_interview.id))
+        for old_interview in existing_proposed_interviews:
+            old_interview.status = InterviewStatus.CANCELLED_BY_RECRUITER
+            old_interview.internal_notes = (
+                                                       old_interview.internal_notes or "") + f"\nSuperseded by new proposal on {datetime.now(dt_timezone.utc).strftime('%Y-%m-%d %H:%M')} by {current_user.username}."
+            old_interview.updated_at = datetime.now(dt_timezone.utc)
+            cancelled_previous_proposal_ids.append(str(old_interview.id))
+
     proposed_slots_data = data.get('proposed_slots');
     location = data.get('location');
     interview_type = data.get('interview_type')
@@ -699,25 +769,30 @@ def propose_interview(candidate_uuid):
     internal_notes = data.get('internal_notes', '')
     position_id_str = data.get('position_id');
     position_id = None
+
     if position_id_str and str(position_id_str).strip() != "" and str(position_id_str) != "0":
         try:
             position_id = int(position_id_str);
             pos_obj = db.session.get(Position, position_id)
             if not pos_obj: return jsonify(
-                {'error': f'Position with ID {position_id} not found.'}), 404  # pragma: no cover
-            if pos_obj.company_id != candidate.company_id: return jsonify(  # pragma: no cover
+                {'error': f'Position with ID {position_id} not found.'}), 404
+            if pos_obj.company_id != candidate.company_id: return jsonify(
                 {'error': 'Selected position does not belong to the candidate\'s company.'}), 400
-        except ValueError:  # pragma: no cover
+        except ValueError:
             return jsonify({'error': 'Invalid position_id format.'}), 400
-    elif str(position_id_str) == "0":  # pragma: no cover
+    elif str(position_id_str) == "0":
         position_id = None
+
     if not proposed_slots_data or not isinstance(proposed_slots_data, list) or not (
-            1 <= len(proposed_slots_data) <= 3): return jsonify(  # pragma: no cover
+            1 <= len(proposed_slots_data) <= 3): return jsonify(
         {'error': 'Proposed slots are required (1 to 3 slots as a list of {start_time, end_time})'}), 400
+
     try:
         greece_tz = ZoneInfo(current_app.config.get('LOCAL_TIMEZONE', 'Europe/Athens'))
-    except Exception:  # pragma: no cover
+    except Exception:
+        current_app.logger.error("Failed to load LOCAL_TIMEZONE for interview proposal.")
         return jsonify({'error': "Server timezone configuration error."}), 500
+
     interview = Interview(candidate_id=candidate.candidate_id, company_id=candidate.company_id,
                           recruiter_id=current_user.id, position_id=position_id, location=location,
                           interview_type=interview_type, notes_for_candidate=notes_for_candidate,
@@ -728,56 +803,63 @@ def propose_interview(candidate_uuid):
     db.session.add(interview)
     try:
         db.session.flush()
-    except Exception as e_flush:  # pragma: no cover
+    except Exception as e_flush:
         db.session.rollback();
+        current_app.logger.error(f"DB flush error during interview proposal: {e_flush}", exc_info=True)
         return jsonify({'error': 'Database error during interview creation (flush).'}), 500
+
     created_interview_slots = []
     for i, slot_data in enumerate(proposed_slots_data):
         start_time_str = slot_data.get('start_time');
         end_time_str = slot_data.get('end_time')
-        if not start_time_str or not end_time_str: db.session.rollback(); return jsonify(  # pragma: no cover
-            {'error': f'Slot {i + 1} is missing start_time or end_time'}), 400
+        if not start_time_str or not end_time_str:
+            db.session.rollback()
+            return jsonify({'error': f'Slot {i + 1} is missing start_time or end_time'}), 400
         try:
             naive_start_dt = datetime.strptime(start_time_str, "%Y-%m-%d %H:%M:%S");
             naive_end_dt = datetime.strptime(end_time_str, "%Y-%m-%d %H:%M:%S")
             local_aware_start_dt = naive_start_dt.replace(tzinfo=greece_tz);
             local_aware_end_dt = naive_end_dt.replace(tzinfo=greece_tz)
-            if local_aware_end_dt <= local_aware_start_dt: db.session.rollback(); return jsonify(  # pragma: no cover
-                {'error': f'Slot {i + 1} end_time must be after start_time'}), 400
-            if local_aware_start_dt < datetime.now(greece_tz): db.session.rollback(); return jsonify(
-                # pragma: no cover
-                {'error': f'Slot {i + 1} cannot be in the past.'}), 400
+            if local_aware_end_dt <= local_aware_start_dt:
+                db.session.rollback()
+                return jsonify({'error': f'Slot {i + 1} end_time must be after start_time'}), 400
+            if local_aware_start_dt < datetime.now(greece_tz):
+                db.session.rollback()
+                return jsonify({'error': f'Slot {i + 1} cannot be in the past.'}), 400
             utc_start_dt = local_aware_start_dt.astimezone(dt_timezone.utc);
             utc_end_dt = local_aware_end_dt.astimezone(dt_timezone.utc)
             interview_slot = InterviewSlot(interview_id=interview.id, start_time=utc_start_dt, end_time=utc_end_dt,
                                            is_selected=False)
             db.session.add(interview_slot);
             created_interview_slots.append(interview_slot)
-        except ValueError:  # pragma: no cover
+        except ValueError:
             db.session.rollback();
             return jsonify(
                 {'error': f'Invalid datetime format for slot {i + 1}. Expected YYYY-MM-DD HH:MM:SS (local time).'}), 400
-        except Exception as e_dt:  # pragma: no cover
+        except Exception as e_dt:
             db.session.rollback();
+            current_app.logger.error(f"Error processing slot {i + 1} datetime: {e_dt}", exc_info=True)
             return jsonify(
                 {'error': f"Error processing datetime for slot {i + 1}: {str(e_dt)}"}), 500
     try:
         history_event_details = {'interview_id': str(interview.id), 'location': location or "N/A",
                                  'type': interview_type or "N/A", 'position_id': position_id,
                                  'proposed_slots_count': len(created_interview_slots)}
-        if cancelled_previous_proposal_ids: history_event_details[  # pragma: no cover
+        if cancelled_previous_proposal_ids: history_event_details[
             'cancelled_previous_proposals'] = cancelled_previous_proposal_ids
         candidate.add_history_event(event_type="INTERVIEW_PROPOSED",
                                     description=f"Interview proposed by {current_user.username}." + (
                                         f" Previous proposals ({len(cancelled_previous_proposal_ids)}) superseded." if cancelled_previous_proposal_ids else ""),
                                     actor_id=current_user.id, details=history_event_details)
-        if candidate.current_status != "Interview Proposed": candidate.current_status = "Interview Proposed"; candidate.status_last_changed_date = datetime.now(
-            dt_timezone.utc)
+        if candidate.current_status != "Interview Proposed":
+            candidate.current_status = "Interview Proposed"
+            candidate.status_last_changed_date = datetime.now(dt_timezone.utc)
         db.session.commit()
         celery.send_task('app.tasks.communication.send_interview_proposal_email_task', args=[str(interview.id)])
         return jsonify(interview.to_dict(include_slots=True)), 201
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         db.session.rollback();
+        current_app.logger.error(f"Final commit error during interview proposal: {e}", exc_info=True)
         return jsonify(
             {'error': 'An unexpected error occurred while proposing the interview.'}), 500
 
@@ -786,7 +868,7 @@ def propose_interview(candidate_uuid):
 def confirm_interview_slot(token, slot_id_choice):
     interview = Interview.query.filter_by(confirmation_token=token).first()
     company_name_for_page = "Our Company";
-    if interview: company_name_for_page = interview.company.name if interview.company else (  # pragma: no cover
+    if interview: company_name_for_page = interview.company.name if interview.company else (
         interview.candidate.company.name if interview.candidate and interview.candidate.company else "Our Company")
     if not interview: return render_template("interview_action_response.html", title="Error",
                                              message="Invalid or expired confirmation link.", status_class="is-danger",
@@ -797,11 +879,10 @@ def confirm_interview_slot(token, slot_id_choice):
         message="This link has expired or the invitation is no longer active.", status_class="is-danger",
         company_name=company_name_for_page), 400
     selected_slot = InterviewSlot.query.filter_by(id=slot_id_choice, interview_id=interview.id).first()
-    if not selected_slot: return render_template("interview_action_response.html", title="Error",  # pragma: no cover
+    if not selected_slot: return render_template("interview_action_response.html", title="Error",
                                                  message="Invalid slot selection for this interview.",
                                                  status_class="is-danger", company_name=company_name_for_page), 400
     if selected_slot.is_selected: return render_template("interview_action_response.html", title="Information",
-                                                         # pragma: no cover
                                                          message="This slot selection has already been processed.",
                                                          status_class="is-info",
                                                          company_name=company_name_for_page), 200
@@ -839,7 +920,7 @@ def confirm_interview_slot(token, slot_id_choice):
         return render_template("interview_action_response.html", title="Interview Confirmed",
                                message=f"Thank you! Your interview has been scheduled for: <strong>{confirmed_time_display}</strong>. You will receive a confirmation email shortly.",
                                status_class="is-success", company_name=company_name_for_page)
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         db.session.rollback();
         current_app.logger.error(f"Error confirming interview slot {slot_id_choice}: {e}",
                                  exc_info=True);
@@ -852,7 +933,7 @@ def confirm_interview_slot(token, slot_id_choice):
 def reject_interview_slots(token):
     interview = Interview.query.filter_by(confirmation_token=token).first()
     company_name_for_page = "Our Company";
-    if interview: company_name_for_page = interview.company.name if interview.company else (  # pragma: no cover
+    if interview: company_name_for_page = interview.company.name if interview.company else (
         interview.candidate.company.name if interview.candidate and interview.candidate.company else "Our Company")
     if not interview: return render_template("interview_action_response.html", title="Error",
                                              message="Invalid or expired link.", status_class="is-danger",
@@ -882,7 +963,7 @@ def reject_interview_slots(token):
         return render_template("interview_action_response.html", title="Interview Slots Declined",
                                message="Thank you for your response. A recruiter may contact you.",
                                status_class="is-info", company_name=company_name_for_page)
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         db.session.rollback();
         current_app.logger.error(f"Error rejecting interview slots for token {token}: {e}",
                                  exc_info=True);
@@ -895,7 +976,7 @@ def reject_interview_slots(token):
 def cancel_interview_by_candidate(cancel_token):
     interview = Interview.query.filter_by(cancellation_token=cancel_token).first()
     company_name_for_page = "Our Company"
-    if interview: company_name_for_page = interview.company.name if interview.company else (  # pragma: no cover
+    if interview: company_name_for_page = interview.company.name if interview.company else (
         interview.candidate.company.name if interview.candidate and interview.candidate.company else "Our Company")
     if not interview: return render_template("interview_action_response.html", title="Error",
                                              message="Invalid or expired cancellation link.", status_class="is-danger",
@@ -909,7 +990,6 @@ def cancel_interview_by_candidate(cancel_token):
     if interview.status == InterviewStatus.SCHEDULED and interview.scheduled_start_time and (
             interview.scheduled_start_time - datetime.now(dt_timezone.utc) < timedelta(
         hours=cancellation_threshold_hours)): return render_template("interview_action_response.html",
-                                                                     # pragma: no cover
                                                                      title="Cancellation Not Allowed",
                                                                      message=f"Interview is too soon (within {cancellation_threshold_hours} hours) to cancel online. Please contact {company_name_for_page}.",
                                                                      status_class="is-warning",
@@ -930,7 +1010,7 @@ def cancel_interview_by_candidate(cancel_token):
             candidate.candidate_confirmation_status = "CancelledByUser";
             new_candidate_status = "Interested" if candidate.current_status in ["Interview Scheduled",
                                                                                 "Interview Proposed"] else candidate.current_status
-            if reschedule_preference == 'no_reschedule':  # pragma: no cover
+            if reschedule_preference == 'no_reschedule':
                 history_event_description += " No reschedule requested."
             elif reschedule_preference == 'request_reschedule':
                 history_event_description += " Reschedule requested."
@@ -956,7 +1036,7 @@ def cancel_interview_by_candidate(cancel_token):
             return render_template("interview_action_response.html", title="Interview Cancelled",
                                    message="Your interview has been cancelled.", status_class="is-success",
                                    company_name=company_name_for_page)
-        except Exception as e:  # pragma: no cover
+        except Exception as e:
             db.session.rollback();
             current_app.logger.error(
                 f"Error committing candidate cancellation for interview token {cancel_token}: {e}",
@@ -976,16 +1056,15 @@ def cancel_interview_by_candidate(cancel_token):
 @login_required
 def cancel_interview_by_recruiter(interview_id):
     interview = db.session.get(Interview, interview_id);
-    if not interview: return jsonify({'error': 'Interview not found'}), 404  # pragma: no cover
+    if not interview: return jsonify({'error': 'Interview not found'}), 404
     candidate = interview.candidate
-    if not candidate: return jsonify({'error': 'Candidate for this interview not found'}), 404  # pragma: no cover
-    can_cancel = (current_user.role == 'superadmin') or (  # pragma: no cover
+    if not candidate: return jsonify({'error': 'Candidate for this interview not found'}), 404
+    can_cancel = (current_user.role == 'superadmin') or (
             current_user.role == 'company_admin' and current_user.company_id == interview.company_id) or (
                          current_user.id == interview.recruiter_id)
     if not can_cancel: return jsonify(
-        {'error': 'Forbidden: You cannot cancel this interview.'}), 403  # pragma: no cover
+        {'error': 'Forbidden: You cannot cancel this interview.'}), 403
     if interview.status not in [InterviewStatus.PROPOSED, InterviewStatus.SCHEDULED]: return jsonify(
-        # pragma: no cover
         {'error': f'Interview cannot be cancelled in state: {interview.status.value}.'}), 400
     data = request.get_json();
     reason = data.get('reason', 'Cancelled by recruiter.') if data else 'Cancelled by recruiter.'
@@ -1018,7 +1097,7 @@ def cancel_interview_by_recruiter(interview_id):
         return jsonify(
             {'message': 'Interview cancelled successfully.', 'interview': interview.to_dict(include_slots=True),
              'candidate_status': candidate.current_status}), 200
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         db.session.rollback();
         current_app.logger.error(f"Error cancelling interview {interview_id} by recruiter: {e}",
                                  exc_info=True);
@@ -1026,11 +1105,11 @@ def cancel_interview_by_recruiter(interview_id):
             {'error': 'Failed to cancel interview.'}), 500
 
 
-# --- OFFER ACTION ROUTES (ΕΝΗΜΕΡΩΜΕΝΑ/ΝΕΑ) ---
+# --- OFFER ACTION ROUTES ---
 @bp.route('/offer/accept/<string:token>', methods=['GET'])
 def accept_offer(token):
     candidate = Candidate.query.filter_by(offer_acceptance_token=token).first()
-    company_name_for_page = "Our Company"  # Default
+    company_name_for_page = "Our Company"
     if candidate and candidate.company:
         company_name_for_page = candidate.company.name
 
@@ -1043,7 +1122,6 @@ def accept_offer(token):
     if candidate.current_status != 'OfferMade':
         current_app.logger.info(
             f"Offer token {token} used for candidate {candidate.candidate_id} whose status is already {candidate.current_status}.")
-        # Προσαρμογή του μηνύματος ανάλογα με το status
         message_for_processed_offer = "This offer has already been processed."
         if candidate.current_status == 'Hired':
             message_for_processed_offer = "This offer has already been accepted and your status is Hired. Welcome aboard!"
@@ -1068,12 +1146,10 @@ def accept_offer(token):
         celery.send_task('app.tasks.communication.send_hired_confirmation_email_to_candidate_task',
                          args=[str(candidate.candidate_id)])
         current_app.logger.info(f"Candidate {candidate.candidate_id} accepted offer. Status: Hired.")
-        # Ειδοποίηση στον recruiter (προαιρετικά, μπορεί να γίνει task)
-        # celery.send_task('app.tasks.communication.send_offer_accepted_notification_to_recruiter_task', args=[str(candidate.candidate_id)])
         return render_template("interview_action_response.html", title="Offer Accepted!",
                                message="Congratulations! Your offer has been accepted. We will be in touch shortly with more details.",
                                status_class="is-success", company_name=company_name_for_page)
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error processing offer acceptance for token {token}: {e}", exc_info=True)
         return render_template("interview_action_response.html", title="System Error",
@@ -1123,7 +1199,7 @@ def reject_offer_form(token):
 
 @bp.route('/offer/reject/<string:token>', methods=['POST'], endpoint='reject_offer_submit')
 def reject_offer_submit(token):
-    candidate = Candidate.query.filter_by(offer_acceptance_token=token).first()  # Ελέγχουμε ξανά το token
+    candidate = Candidate.query.filter_by(offer_acceptance_token=token).first()
     company_name_for_page = "Our Company"
     position_name_display = "this position"
     frontend_url_for_template = current_app.config.get('FRONTEND_URL', '#')
@@ -1135,15 +1211,13 @@ def reject_offer_submit(token):
             if position_names:
                 position_name_display = ', '.join(position_names)
 
-    # Δεν ελέγχουμε is_offer_token_valid() εδώ, γιατί αν το token έληξε μεταξύ GET και POST,
-    # ο χρήστης απλά δεν θα έπρεπε να μπορεί να υποβάλει. Ο έλεγχος του status είναι πιο σημαντικός.
-    if not candidate:  # pragma: no cover
+    if not candidate:
         current_app.logger.error(f"Offer rejection submission for non-existent token/candidate: {token}")
         return render_template("interview_action_response.html", title="Error",
                                message="Invalid request. Offer link may be incorrect or expired.",
                                status_class="is-danger", company_name=company_name_for_page), 400
 
-    if candidate.current_status != 'OfferMade':  # pragma: no cover
+    if candidate.current_status != 'OfferMade':
         return render_template("interview_action_response.html", title="Information",
                                message="This offer has already been processed.",
                                status_class="is-info", company_name=company_name_for_page), 400
@@ -1176,13 +1250,13 @@ def reject_offer_submit(token):
         celery.send_task('app.tasks.communication.send_offer_declined_confirmation_to_candidate_task',
                          args=[str(candidate.candidate_id), rejection_reason_provided])
         celery.send_task('app.tasks.communication.send_offer_declined_notification_to_recruiter_task',
-                         args=[str(candidate.candidate_id), rejection_reason or None])  # Στέλνουμε τον λόγο
+                         args=[str(candidate.candidate_id), rejection_reason or None])
         current_app.logger.info(
             f"Candidate {candidate.candidate_id} rejected offer. Status: Declined. Reason: '{escape(rejection_reason) if rejection_reason else 'N/A'}'")
         return render_template("interview_action_response.html", title="Offer Declined",
                                message="Thank you for your response. We have recorded your decision and appreciate your feedback.",
                                status_class="is-info", company_name=company_name_for_page)
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         db.session.rollback()
         current_app.logger.error(f"Error processing offer rejection for token {token} (submit): {e}", exc_info=True)
         return render_template("offer_reject_form.html",
@@ -1194,7 +1268,7 @@ def reject_offer_submit(token):
                                error_message="An internal error occurred. Please try submitting again or contact us."), 500
 
 
-# --- SETTINGS ROUTE (παραμένει ως έχει από την προηγούμενη πλήρη έκδοση) ---
+# --- SETTINGS ROUTE ---
 @bp.route('/settings', methods=['GET'])
 @login_required
 def get_user_settings():
@@ -1208,12 +1282,12 @@ def get_user_settings():
 @login_required
 def update_user_settings():
     data = request.get_json();
-    if not data: return jsonify({'error': 'No data provided'}), 400  # pragma: no cover
+    if not data: return jsonify({'error': 'No data provided'}), 400
     updated_fields_count = 0;
     settings_changed_details = {}
     if 'enable_email_interview_reminders' in data:
         new_val = bool(data['enable_email_interview_reminders'])
-        if current_user.enable_email_interview_reminders != new_val: settings_changed_details[  # pragma: no cover
+        if current_user.enable_email_interview_reminders != new_val: settings_changed_details[
             'enable_email_interview_reminders'] = {'old': current_user.enable_email_interview_reminders,
                                                    'new': new_val}; current_user.enable_email_interview_reminders = new_val; updated_fields_count += 1
     if 'interview_reminder_lead_time_minutes' in data:
@@ -1221,15 +1295,14 @@ def update_user_settings():
             lead_time = int(data['interview_reminder_lead_time_minutes']);
             min_lead = current_app.config.get('MIN_INTERVIEW_REMINDER_LEAD_TIME', 15);
             max_lead = current_app.config.get('MAX_INTERVIEW_REMINDER_LEAD_TIME', 2 * 24 * 60)
-            if not (min_lead <= lead_time <= max_lead): return jsonify(  # pragma: no cover
+            if not (min_lead <= lead_time <= max_lead): return jsonify(
                 {'error': f'Reminder lead time must be between {min_lead} and {max_lead} minutes.'}), 400
             if current_user.interview_reminder_lead_time_minutes != lead_time: settings_changed_details[
-                # pragma: no cover
                 'interview_reminder_lead_time_minutes'] = {'old': current_user.interview_reminder_lead_time_minutes,
                                                            'new': lead_time}; current_user.interview_reminder_lead_time_minutes = lead_time; updated_fields_count += 1
-        except (ValueError, TypeError):  # pragma: no cover
+        except (ValueError, TypeError):
             return jsonify({'error': 'Invalid lead time value.'}), 400
-    if updated_fields_count == 0: return jsonify({'message': 'No settings were changed.'}), 200  # pragma: no cover
+    if updated_fields_count == 0: return jsonify({'message': 'No settings were changed.'}), 200
     current_user.updated_at = datetime.now(dt_timezone.utc)
     try:
         db.session.commit();
@@ -1237,7 +1310,7 @@ def update_user_settings():
                                      'interview_reminder_lead_time_minutes': current_user.interview_reminder_lead_time_minutes}
         current_app.logger.info(f"User {current_user.id} updated settings: {settings_changed_details}")
         return jsonify({'message': 'User settings updated successfully', 'settings': updated_settings_response}), 200
-    except Exception as e:  # pragma: no cover
+    except Exception as e:
         db.session.rollback();
         current_app.logger.error(f"Error updating user settings for user {current_user.id}: {e}",
                                  exc_info=True);

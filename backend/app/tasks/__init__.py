@@ -37,4 +37,15 @@ except Exception as e:
     import logging
     logging.getLogger(__name__).error(f"Unexpected error importing 'reminders' task module: {e}", exc_info=True)
 
+try:
+    from . import conversion
+    # print("DEBUG: app.tasks.conversion imported successfully from tasks/__init__.py")
+except ImportError as e: # pragma: no cover
+    import logging
+    logging.getLogger(__name__).error(f"Failed to import 'conversion' task module: {e}", exc_info=True)
+except Exception as e: # pragma: no cover
+    import logging
+    logging.getLogger(__name__).error(f"Unexpected error importing 'conversion' task module: {e}", exc_info=True)
+
+
 # print("DEBUG: app/tasks/__init__.py execution finished.")
