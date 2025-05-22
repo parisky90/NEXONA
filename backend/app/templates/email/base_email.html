@@ -1,0 +1,60 @@
+{# backend/app/templates/email/base_email.html #}
+<!DOCTYPE html>
+<html lang="el">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block subject %}{% endblock %}</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; color: #333333; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;}
+        .email-container { max-width: 600px; margin: 20px auto; background-color: #ffffff; padding: 25px; border: 1px solid #dddddd; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+        .email-header { text-align: center; padding-bottom: 20px; border-bottom: 1px solid #eeeeee; margin-bottom: 25px; }
+        .email-header h2 { margin: 0; color: #007bff; font-size: 1.8em; }
+        .email-content { padding: 0; line-height: 1.65; font-size: 1rem; }
+        .email-footer { text-align: center; padding-top: 25px; border-top: 1px solid #eeeeee; margin-top: 30px; font-size: 0.85em; color: #777777; }
+        .button-link {
+            display: inline-block;
+            padding: 12px 25px;
+            margin: 15px 5px;
+            background-color: #007bff;
+            color: #ffffff !important;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+            font-size: 0.95em;
+            transition: background-color 0.2s ease;
+        }
+        .button-link-secondary {
+            background-color: #6c757d;
+        }
+        .button-link:hover {
+            background-color: #0056b3;
+        }
+        .button-link-secondary:hover {
+            background-color: #5a6268;
+        }
+        p { margin-bottom: 1.2em; margin-top: 0; }
+        strong { color: #222; }
+        .offer-details-section { margin-top: 20px; padding: 15px; border: 1px solid #e0e0e0; background-color: #f9f9f9; border-radius: 5px; }
+        .offer-details-section h3 { margin-top:0; margin-bottom:12px; font-size: 1.1em; color: #333; }
+        .offer-details-section p { margin-bottom: 8px; }
+        .important-note { margin-top: 15px; margin-bottom: 15px; padding: 12px; border: 1px solid #f5c6cb; background-color: #f8d7da; border-radius: 4px; }
+        .important-note p { margin:5px 0 0 0; color:#721c24; white-space: pre-wrap; }
+        .important-note p:first-child { margin-top:0; font-weight:bold; }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="email-header">
+            <h2>{{ app_name }}</h2>
+        </div>
+        <div class="email-content">
+            {% block content %}{% endblock %}
+        </div>
+        <div class="email-footer">
+            <p>© {{ now.year }} {{ app_name }}. Με επιφύλαξη παντός δικαιώματος.</p>
+            <p><a href="{{ app_home_url if app_home_url else '#' }}" style="color: #007bff; text-decoration: none;">Επισκεφθείτε την ιστοσελίδα μας</a></p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,41 @@
+{# backend/app/templates/email/offer_made_candidate.txt #}
+Αγαπητέ/ή {{ candidate_name }},
+
+Με μεγάλη μας χαρά σας αποστέλλουμε προσφορά εργασίας από την εταιρεία {{ company_name }}
+{% if position_name_display and position_name_display != "η προτεινόμενη θέση" %}για τη θέση του/της {{ position_name_display }}.
+{% else %}για μια θέση στην ομάδα μας.
+{% endif %}
+
+{% if offer_details %}
+Λεπτομέρειες Προσφοράς:
+{% if offer_details.offer_amount is not none %}
+Μισθός/Αποζημίωση: EUR {{ "{:,.2f}".format(offer_details.offer_amount|float) }}
+{% endif %}
+{% if offer_details.offer_date_formatted %}
+Ημερομηνία Προσφοράς: {{ offer_details.offer_date_formatted }}
+{% elif offer_details.offer_date %}
+Ημερομηνία Προσφοράς: {{ offer_details.offer_date.split('T')[0] }}
+{% endif %}
+{% if offer_details.offer_notes %}
+Πρόσθετες Σημειώσεις:
+{{ offer_details.offer_notes }}
+{% endif %}
+{% else %}
+Οι αναλυτικοί όροι της προσφοράς θα σας κοινοποιηθούν ξεχωριστά ή είναι διαθέσιμοι στην πύλη υποψηφίων σας.
+{% endif %}
+
+Εντυπωσιαστήκαμε ιδιαίτερα από τα προσόντα σας και πιστεύουμε ότι θα αποτελέσετε σημαντικό μέλος της ομάδας μας.
+Η παρούσα προσφορά ισχύει για τις επόμενες {{ token_expiration_days }} ημέρες.
+
+Για να απαντήσετε σε αυτή την προσφορά, παρακαλούμε χρησιμοποιήστε τους παρακάτω συνδέσμους:
+
+Αποδοχή Προσφοράς: {{ accept_url }}
+
+Απόρριψη Προσφοράς: {{ reject_url }}
+
+Εάν έχετε οποιεσδήποτε ερωτήσεις, μη διστάσετε να επικοινωνήσετε με τον υπεύθυνο προσλήψεων ή να απαντήσετε σε αυτό το email.
+
+Αναμένουμε τη θετική σας απάντηση!
+
+Με εκτίμηση,
+Η Ομάδα Προσλήψεων της {{ company_name }}

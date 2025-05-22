@@ -1,0 +1,32 @@
+{# backend/app/templates/email/offer_declined_recruiter.html #}
+{% extends "email/base_email.html" %}
+
+{% block subject %}Απόρριψη Προσφοράς από Υποψήφιο: {{ candidate_name }}{% endblock %}
+
+{% block content %}
+<p>Γεια σας {{ recruiter_name }},</p>
+
+<p>Αυτή είναι μια αυτοματοποιημένη ειδοποίηση για να σας ενημερώσουμε ότι ο/η υποψήφιος/α, <strong>{{ candidate_name }}</strong>, απέρριψε την προσφορά
+{% if position_name_display and position_name_display != "η προτεινόμενη θέση" %}
+για τη θέση του/της <strong>{{ position_name_display }}</strong>
+{% else %}
+που του/της έγινε
+{% endif %}
+στην εταιρεία {{ company_name }}.</p>
+
+{% if rejection_reason %}
+    <div class="important-note">
+        <p>Λόγος που δόθηκε από τον/την υποψήφιο/α:</p>
+        <p>{{ rejection_reason }}</p>
+    </div>
+{% else %}
+    <p>Ο/Η υποψήφιος/α δεν παρείχε συγκεκριμένο λόγο για την απόρριψη της προσφοράς.</p>
+{% endif %}
+
+<p>Η κατάσταση του/της υποψηφίου/ας έχει ενημερωθεί σε "Declined" και ο λόγος (εάν δόθηκε) έχει προστεθεί στα σχόλια HR.</p>
+
+<p>Μπορείτε να δείτε τις λεπτομέρειες του/της υποψηφίου/ας εδώ:<br>
+<a href="{{ view_candidate_url }}" class="button-link">Προβολή Προφίλ Υποψηφίου</a></p>
+
+<p>Ευχαριστούμε,<br>Σύστημα NEXONA ATS</p>
+{% endblock %}

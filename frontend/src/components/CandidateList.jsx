@@ -4,15 +4,19 @@ import { useNavigate } from 'react-router-dom';
 import apiClient from '../api';
 import './CandidateList.css';
 
-const getConfirmationStatusInfo = (confirmationStatus) => {
+// Helper για την κατάσταση επιβεβαίωσης συνέντευξης (από CandidateDetailPage)
+const getCandidateConfirmationStatusInfo = (confirmationStatus) => {
+    if (!confirmationStatus) return null; // Επιστροφή null αν δεν υπάρχει status
     switch (confirmationStatus) {
         case 'Confirmed': return { text: 'Confirmed', className: 'status-confirmed' };
-        case 'Declined': return { text: 'Declined', className: 'status-declined' }; // Assuming this is for interview slots
         case 'DeclinedSlots': return { text: 'Declined Slots', className: 'status-declined-slots' };
-        case 'Pending': return { text: 'Pending', className: 'status-pending' };
-        default: return null;
+        case 'CancelledByUser': return { text: 'Cand. Cancelled', className: 'status-cancelled-user' }; // Συντομευμένο
+        case 'RecruiterCancelled': return { text: 'Rec. Cancelled', className: 'status-cancelled-recruiter' }; // Συντομευμένο
+        case 'Pending': return { text: 'Pending Resp.', className: 'status-pending' }; // Συντομευμένο
+        default: return { text: confirmationStatus, className: 'status-unknown' }; // Εμφάνισε το status αν είναι κάτι άλλο
     }
 };
+
 
 const RATING_OPTIONS_FOR_DISPLAY = [
     { value: 'Teleio', label: 'Τέλειο', order: 1 },
@@ -34,14 +38,23 @@ const getRatingOrder = (value) => {
     return option ? option.order : 99;
 };
 
-// Helper function to format a list of objects (branches or positions) into a string of names/titles
 const formatObjectListNames = (objectList, nameKey = 'name') => {
     if (!objectList || !Array.isArray(objectList) || objectList.length === 0) {
         return '-';
     }
-    return objectList.map(item => item[nameKey] || 'Unnamed').join(', ');
+    return objectList.map(item => item && item[nameKey] ? item[nameKey] : 'Unnamed').join(', ');
 };
 
+// Helper για την ημερομηνία
+const formatInterviewDate = (isoString) => {
+    if (!isoString) return '-';
+    try {
+        return new Date(isoString).toLocaleString([], {
+            month: 'numeric', day: 'numeric',
+            hour: '2-digit', minute: '2-digit' // Πιο σύντομη μορφή για τη λίστα
+        });
+    } catch { return 'Invalid Date'; }
+};
 
 function CandidateList({ candidates, listTitle = "Candidates", onCandidateDeleted }) {
   const navigate = useNavigate();
@@ -81,31 +94,51 @@ function CandidateList({ candidates, listTitle = "Candidates", onCandidateDelete
     let sortableItems = [...candidates];
     if (sortConfig.key !== null) {
       sortableItems.sort((a, b) => {
-        let valA = a[sortConfig.key];
-        let valB = b[sortConfig.key];
+        let valA, valB;
+
+        // Ειδικός χειρισμός για πεδία που μπορεί να είναι σε related objects
+        if (sortConfig.key === 'interview_date') {
+            const latestInterviewA = a.interviews?.find(iv => iv.status === 'SCHEDULED');
+            valA = latestInterviewA?.scheduled_start_time ? new Date(latestInterviewA.scheduled_start_time) : new Date(0);
+            const latestInterviewB = b.interviews?.find(iv => iv.status === 'SCHEDULED');
+            valB = latestInterviewB?.scheduled_start_time ? new Date(latestInterviewB.scheduled_start_time) : new Date(0);
+        } else if (sortConfig.key === 'confirmation') {
+            valA = a.candidate_confirmation_status || '';
+            valB = b.candidate_confirmation_status || '';
+        } else {
+            valA = a[sortConfig.key];
+            valB = b[sortConfig.key];
+        }
 
         if (sortConfig.key === 'evaluation_rating') {
             valA = getRatingOrder(a.evaluation_rating);
             valB = getRatingOrder(b.evaluation_rating);
-        } else if (sortConfig.key === 'submission_date' || sortConfig.key === 'interview_datetime') {
-            valA = a[sortConfig.key] ? new Date(a[sortConfig.key]) : new Date(0);
-            valB = b[sortConfig.key] ? new Date(b[sortConfig.key]) : new Date(0);
-            if (isNaN(valA.getTime())) valA = new Date(0);
-            if (isNaN(valB.getTime())) valB = new Date(0);
-        } else if (sortConfig.key === 'positions') { // Ταξινόμηση βάσει του πρώτου position name
+        } else if (sortConfig.key === 'submission_date' || sortConfig.key === 'interview_date') { // 'interview_date' χειρίζεται παραπάνω
+            if (sortConfig.key !== 'interview_date') { // Για submission_date
+                 valA = a[sortConfig.key] ? new Date(a[sortConfig.key]) : new Date(0);
+                 valB = b[sortConfig.key] ? new Date(b[sortConfig.key]) : new Date(0);
+            }
+            if (valA && isNaN(valA.getTime())) valA = new Date(0);
+            if (valB && isNaN(valB.getTime())) valB = new Date(0);
+        } else if (sortConfig.key === 'positions') {
             valA = (a.positions && a.positions.length > 0 && a.positions[0].position_name) ? a.positions[0].position_name.toLowerCase() : '';
             valB = (b.positions && b.positions.length > 0 && b.positions[0].position_name) ? b.positions[0].position_name.toLowerCase() : '';
-        } else if (sortConfig.key === 'branches') { // Ταξινόμηση βάσει του πρώτου branch name
+        } else if (sortConfig.key === 'branches') {
             valA = (a.branches && a.branches.length > 0 && a.branches[0].name) ? a.branches[0].name.toLowerCase() : '';
             valB = (b.branches && b.branches.length > 0 && b.branches[0].name) ? b.branches[0].name.toLowerCase() : '';
         } else if (typeof valA === 'string' && typeof valB === 'string') {
             valA = valA.toLowerCase();
             valB = valB.toLowerCase();
-        } else if (valA === null || valA === undefined) {
-            return sortConfig.direction === 'ascending' ? 1 : -1;
-        } else if (valB === null || valB === undefined) {
-            return sortConfig.direction === 'ascending' ? -1 : 1;
         }
+
+        // Χειρισμός null/undefined για αριθμητικές/ημερομηνίες μετά τη μετατροπή
+        if (valA === null || valA === undefined || (valA instanceof Date && valA.getTime() === new Date(0).getTime())) {
+            return sortConfig.direction === 'ascending' ? 1 : -1; // Βάζει τα null/κενά στο τέλος όταν ανεβαίνει
+        }
+        if (valB === null || valB === undefined || (valB instanceof Date && valB.getTime() === new Date(0).getTime())) {
+            return sortConfig.direction === 'ascending' ? -1 : 1; // Βάζει τα null/κενά στην αρχή όταν ανεβαίνει
+        }
+
 
         if (valA < valB) return sortConfig.direction === 'ascending' ? -1 : 1;
         if (valA > valB) return sortConfig.direction === 'ascending' ? 1 : -1;
@@ -135,36 +168,52 @@ function CandidateList({ candidates, listTitle = "Candidates", onCandidateDelete
             <tr>
               <th onClick={() => requestSort('full_name')} className="sortable-header">Name{getSortIndicator('full_name')}</th>
               <th onClick={() => requestSort('positions')} className="sortable-header">Position(s){getSortIndicator('positions')}</th>
-              <th onClick={() => requestSort('branches')} className="sortable-header">Branch(es){getSortIndicator('branches')}</th> {/* ΝΕΑ ΣΤΗΛΗ */}
+              <th onClick={() => requestSort('branches')} className="sortable-header">Branch(es){getSortIndicator('branches')}</th>
               <th onClick={() => requestSort('evaluation_rating')} className="sortable-header" style={{textAlign: 'center'}}>Rating (HR){getSortIndicator('evaluation_rating')}</th>
-              <th onClick={() => requestSort('interview_datetime')} className="sortable-header">Interview Date{getSortIndicator('interview_datetime')}</th>
-              <th>Confirmation</th>
+              <th onClick={() => requestSort('interview_date')} className="sortable-header">Interview Date{getSortIndicator('interview_date')}</th>
+              <th onClick={() => requestSort('confirmation')} className="sortable-header">Confirmation{getSortIndicator('confirmation')}</th>
               <th onClick={() => requestSort('current_status')} className="sortable-header">Status{getSortIndicator('current_status')}</th>
               <th style={{textAlign: 'center'}}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {sortedCandidates.map((candidate) => {
-              const confirmationInfo = getConfirmationStatusInfo(candidate.candidate_confirmation_status);
-              // Το candidate.positions είναι πίνακας αντικειμένων [{position_id: X, position_name: "YYY"}, ...]
-              // Το candidate.branches είναι πίνακας αντικειμένων [{id: X, name: "YYY"}, ...]
+              // Βρες την πιο πρόσφατη προγραμματισμένη συνέντευξη (αν υπάρχει)
+              // Υποθέτουμε ότι το backend στέλνει τις συνεντεύξεις ταξινομημένες (π.χ. created_at desc)
+              // ή μπορούμε να τις ταξινομήσουμε εδώ. Για απλότητα, παίρνουμε την πρώτη SCHEDULED.
+              const latestScheduledInterview = candidate.interviews?.find(
+                (iv) => iv.status === 'SCHEDULED' && iv.scheduled_start_time
+              );
+
+              const confirmationInfo = getCandidateConfirmationStatusInfo(candidate.candidate_confirmation_status);
+
               return (
                 <tr key={candidate.candidate_id} onClick={() => handleRowClick(candidate.candidate_id)} className="clickable-row">
                   <td>{candidate.full_name || 'N/A'}</td>
                   <td>{formatObjectListNames(candidate.positions, 'position_name')}</td>
-                  <td>{formatObjectListNames(candidate.branches, 'name')}</td> {/* ΕΜΦΑΝΙΣΗ BRANCHES */}
+                  <td>{formatObjectListNames(candidate.branches, 'name')}</td>
                   <td style={{textAlign: 'center', fontWeight: 'bold'}}>
                     {getRatingLabelForList(candidate.evaluation_rating)}
                   </td>
                   <td>
-                    {candidate.interview_datetime ? new Date(candidate.interview_datetime).toLocaleString([], { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit'}) : '-'}
-                    {candidate.interview_datetime && candidate.interview_location && ` @ ${candidate.interview_location}`}
+                    {latestScheduledInterview
+                      ? formatInterviewDate(latestScheduledInterview.scheduled_start_time)
+                      : '-'
+                    }
+                    {latestScheduledInterview && latestScheduledInterview.location && ` @ ${latestScheduledInterview.location}`}
                   </td>
                   <td>
-                    {candidate.interview_datetime && confirmationInfo && confirmationInfo.text && (
+                    {/* Εμφάνισε το confirmation status του υποψηφίου αν υπάρχει προγραμματισμένη συνέντευξη */}
+                    {latestScheduledInterview && confirmationInfo && confirmationInfo.text && (
                       <span className={`status-badge ${confirmationInfo.className}`}>
                         {confirmationInfo.text}
                       </span>
+                    )}
+                    {/* Αν δεν υπάρχει προγραμματισμένη συνέντευξη αλλά υπάρχει γενικό confirmation status, δείξτο (λιγότερο πιθανό σενάριο) */}
+                    {!latestScheduledInterview && confirmationInfo && confirmationInfo.text && (
+                         <span className={`status-badge ${confirmationInfo.className}`}>
+                            {confirmationInfo.text} (No Sched. IV)
+                        </span>
                     )}
                   </td>
                   <td>

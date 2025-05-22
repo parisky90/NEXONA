@@ -1,0 +1,26 @@
+{# backend/app/templates/email/hired_confirmation_candidate.html #}
+{% extends "email/base_email.html" %}
+
+{% block subject %}Καλώς ήρθατε στην {{ company_name }}!{% endblock %}
+
+{% block content %}
+<p>Αγαπητέ/ή {{ candidate_name }},</p>
+
+<p>Συγχαρητήρια και καλώς ήρθατε στην ομάδα μας!</p>
+
+<p>Με μεγάλη μας χαρά επιβεβαιώνουμε ότι αποδεχτήκατε την προσφορά
+{% if position_name_display and position_name_display != "ο νέος σας ρόλος" %}
+για τη θέση του/της <strong>{{ position_name_display }}</strong>
+{% endif %}
+στην εταιρεία <strong>{{ company_name }}</strong>. Η κατάστασή σας έχει ενημερωθεί σε "Προσλήφθηκε".</p>
+
+{% if welcome_message_body %}
+    {{ welcome_message_body | safe }}
+{% else %}
+    <p>Είμαστε πολύ ενθουσιασμένοι που θα γίνετε μέλος της ομάδας μας! Σύντομα θα επικοινωνήσουμε μαζί σας με περισσότερες λεπτομέρειες σχετικά με την ημερομηνία έναρξης και τη διαδικασία ενσωμάτωσής σας.</p>
+{% endif %}
+
+<p>Εάν έχετε οποιεσδήποτε άμεσες ερωτήσεις, μη διστάσετε να επικοινωνήσετε μαζί μας.</p>
+
+<p>Με εκτίμηση,<br>Η Ομάδα της {{ company_name }}</p>
+{% endblock %}

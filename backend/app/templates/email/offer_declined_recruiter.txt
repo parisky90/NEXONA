@@ -1,0 +1,23 @@
+{# backend/app/templates/email/offer_declined_recruiter.txt #}
+Γεια σας {{ recruiter_name }},
+
+Αυτή είναι μια αυτοματοποιημένη ειδοποίηση για να σας ενημερώσουμε ότι ο/η υποψήφιος/α, {{ candidate_name }}, απέρριψε την προσφορά
+{% if position_name_display and position_name_display != "η προτεινόμενη θέση" %}για τη θέση του/της {{ position_name_display }}
+{% else %}που του/της έγινε
+{% endif %}
+στην εταιρεία {{ company_name }}.
+
+{% if rejection_reason %}
+Λόγος που δόθηκε από τον/την υποψήφιο/α:
+{{ rejection_reason }}
+{% else %}
+Ο/Η υποψήφιος/α δεν παρείχε συγκεκριμένο λόγο για την απόρριψη της προσφοράς.
+{% endif %}
+
+Η κατάσταση του/της υποψηφίου/ας έχει ενημερωθεί σε "Declined" και ο λόγος (εάν δόθηκε) έχει προστεθεί στα σχόλια HR.
+
+Μπορείτε να δείτε τις λεπτομέρειες του/της υποψηφίου/ας εδώ:
+{{ view_candidate_url }}
+
+Ευχαριστούμε,
+Σύστημα NEXONA ATS

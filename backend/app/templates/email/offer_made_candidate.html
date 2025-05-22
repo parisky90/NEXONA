@@ -1,0 +1,79 @@
+{# backend/app/templates/email/offer_made_candidate.html #}
+{% extends "email/base_email.html" %}
+
+{% block subject %}Προσφορά Εργασίας από {{ company_name }}{% endblock %}
+
+{% block content %}
+<p>Αγαπητέ/ή {{ candidate_name }},</p>
+
+<p>Με μεγάλη μας χαρά σας αποστέλλουμε προσφορά εργασίας από την εταιρεία <strong>{{ company_name }}</strong>
+{% if position_name_display and position_name_display != "η προτεινόμενη θέση" %}
+για τη θέση του/της <strong>{{ position_name_display }}</strong>.
+{% else %}
+για μια θέση στην ομάδα μας.
+{% endif %}
+</p>
+
+{% if offer_details %}
+    <div class="offer-details-section">
+        <h3>Λεπτομέρειες Προσφοράς:</h3>
+        {% if offer_details.offer_amount is not none %}
+            <p><strong>Μισθός/Αποζημίωση:</strong> {{ "€ {:,.2f}".format(offer_details.offer_amount|float) }}</p> {# Προσθήκη float filter για ασφάλεια #}
+        {% endif %}
+        {% if offer_details.offer_date_formatted %}
+            <p><strong>Ημερομηνία Προσφοράς:</strong> {{ offer_details.offer_date_formatted }}</p>
+        {% elif offer_details.offer_date %}
+             <p><strong>Ημερομηνία Προσφοράς:</strong> {{ offer_details.offer_date.split('T')[0] }}</p>
+        {% endif %}
+        {% if offer_details.offer_notes %}
+            <p><strong>Πρόσθετες Σημειώσεις:</strong></p>
+            <div style="white-space: pre-wrap; padding-left: 10px; border-left: 2px solid #ddd;">{{ offer_details.offer_notes | safe }}</div>
+        {% endif %}
+    </div>
+{% else %}
+    <p>Οι αναλυτικοί όροι της προσφοράς θα σας κοινοποιηθούν ξεχωριστά ή είναι διαθέσιμοι στην πύλη υποψηφίων σας.</p>
+{% endif %}
+
+<p style="margin-top: 25px;">Εντυπωσιαστήκαμε ιδιαίτερα από τα προσόντα σας και πιστεύουμε ότι θα αποτελέσετε σημαντικό μέλος της ομάδας μας.
+Η παρούσα προσφορά ισχύει για τις επόμενες <strong>{{ token_expiration_days }} ημέρες</strong>.</p>
+
+<p>Για να απαντήσετε σε αυτή την προσφορά, παρακαλούμε χρησιμοποιήστε τους παρακάτω συνδέσμους:</p>
+
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" class="btn btn-primary" style="margin-top: 20px; margin-bottom: 20px;">
+    <tbody>
+        <tr>
+            <td align="center">
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                    <tbody>
+                        <tr>
+                            <td> <a href="{{ accept_url }}" target="_blank" class="button-link">Αποδοχή Προσφοράς</a> </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </td>
+        </tr>
+    </tbody>
+</table>
+
+<table role="presentation" border="0" cellpadding="0" cellspacing="0" class="btn btn-secondary" style="margin-bottom: 20px;">
+    <tbody>
+        <tr>
+            <td align="center">
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                    <tbody>
+                        <tr>
+                            <td> <a href="{{ reject_url }}" target="_blank" class="button-link button-link-secondary">Απόρριψη Προσφοράς</a> </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </td>
+        </tr>
+    </tbody>
+</table>
+
+<p>Εάν έχετε οποιεσδήποτε ερωτήσεις, μη διστάσετε να επικοινωνήσετε με τον υπεύθυνο προσλήψεων ή να απαντήσετε σε αυτό το email.</p>
+
+<p>Αναμένουμε τη θετική σας απάντηση!</p>
+
+<p>Με εκτίμηση,<br>Η Ομάδα Προσλήψεων της {{ company_name }}</p>
+{% endblock %}
