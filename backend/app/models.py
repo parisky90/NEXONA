@@ -2,13 +2,15 @@
 import enum
 from flask_login import UserMixin, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-from app import db, s3_service_instance
+from app import db, s3_service_instance  # Αν το s3_service_instance ορίζεται στο __init__.py του app module
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.schema import UniqueConstraint
-from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy.orm.attributes import flag_modified, instance_state  # instance_state αντί για attributes.instance_state
+from sqlalchemy import event  # Προσθήκη event
 import uuid
 from datetime import datetime, timezone as dt_timezone, timedelta
 from flask import current_app
+import pytz  # Προσθήκη pytz
 
 candidate_branch_association = db.Table('candidate_branch_association',
                                         db.Column('candidate_id', UUID(as_uuid=True),
@@ -43,20 +45,18 @@ class Branch(db.Model):
     updated_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(dt_timezone.utc),
                            onupdate=lambda: datetime.now(dt_timezone.utc))
 
-    # --- ΔΙΟΡΘΩΣΗ: ΟΡΙΣΜΟΣ ΤΟΥ RELATIONSHIP 'candidates' ---
     candidates = db.relationship(
         'Candidate',
         secondary=candidate_branch_association,
-        back_populates='branches',  # Το Candidate.branches θα έχει back_populates='candidates'
+        back_populates='branches',
         lazy='dynamic'
     )
-    # --- ΤΕΛΟΣ ΔΙΟΡΘΩΣΗΣ ---
 
     __table_args__ = (
         UniqueConstraint('name', 'company_id', name='uq_branch_name_company_id'),
     )
 
-    def to_dict(self):
+    def to_dict(self):  # Changed to_dict_simple to to_dict for consistency if it's the only one
         return {
             'id': self.id,
             'name': self.name,
@@ -110,7 +110,6 @@ class Company(db.Model):
 
 
 class CompanySettings(db.Model):
-    # ... (παραμένει ίδιο) ...
     __tablename__ = 'company_settings'
     id = db.Column(db.Integer, primary_key=True)
     company_id = db.Column(db.Integer, db.ForeignKey('companies.id', ondelete='CASCADE'), nullable=False,
@@ -132,7 +131,6 @@ class CompanySettings(db.Model):
 
 
 class User(UserMixin, db.Model):
-    # ... (παραμένει ίδιο) ...
     __tablename__ = 'users'
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(64), index=True, unique=True, nullable=False)
@@ -176,7 +174,6 @@ class User(UserMixin, db.Model):
 
 
 class Candidate(db.Model):
-    # ... (παραμένει ίδιο με την προηγούμενη πλήρη έκδοση που περιείχε τα offer_acceptance_token και το relationship branches) ...
     __tablename__ = 'candidates'
     candidate_id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     company_id = db.Column(db.Integer, db.ForeignKey('companies.id', ondelete='CASCADE'), nullable=False)
@@ -206,6 +203,10 @@ class Candidate(db.Model):
     offer_acceptance_token = db.Column(db.String(64), unique=True, nullable=True, index=True)
     offer_acceptance_token_expiration = db.Column(db.DateTime(timezone=True), nullable=True)
 
+    # --- ΝΕΟ ΠΕΔΙΟ ΓΙΑ ΤΗΝ ΗΜΕΡΟΜΗΝΙΑ ΑΠΟΣΤΟΛΗΣ ΠΡΟΣΦΟΡΑΣ ---
+    offer_sent_at = db.Column(db.DateTime(timezone=True), nullable=True, index=True)  # timezone=True για συνέπεια
+    # --------------------------------------------------------
+
     positions = db.relationship('Position', secondary=candidate_position_association, back_populates='candidates',
                                 lazy='dynamic')
     interviews = db.relationship('Interview', backref='candidate', lazy='dynamic', cascade='all, delete-orphan',
@@ -226,6 +227,42 @@ class Candidate(db.Model):
         return " ".join(filter(None, parts)) or "N/A"
 
     full_name = property(get_full_name)
+
+    # --- ΝΕΑ PROPERTY ΓΙΑ ΤΙΣ ΗΜΕΡΕΣ ΛΗΞΗΣ ΠΡΟΣΦΟΡΑΣ ---
+    @property
+    def offer_expires_in_days(self):
+        if self.current_status == 'OfferMade' and self.offer_sent_at:
+            try:
+                # Η προσφορά ισχύει για 7 ημέρες από την αποστολή
+                # Το offer_sent_at αποθηκεύεται ως UTC
+                offer_sent_at_utc = self.offer_sent_at
+                if offer_sent_at_utc.tzinfo is None:  # Αν είναι naive, το θεωρούμε UTC
+                    offer_sent_at_utc = pytz.utc.localize(offer_sent_at_utc)
+
+                expiration_moment_utc = offer_sent_at_utc + timedelta(days=7)
+
+                # Παίρνουμε την τρέχουσα ώρα UTC για συνεπή σύγκριση
+                now_utc = datetime.now(dt_timezone.utc)
+
+                # Για να μετρήσουμε "ολόκληρες" ημέρες που απομένουν μέχρι το τέλος της ημέρας λήξης
+                # παίρνουμε την ημερομηνία λήξης και την τρέχουσα ημερομηνία
+                expiration_date_only = expiration_moment_utc.date()
+                today_date_only = now_utc.date()
+
+                delta = expiration_date_only - today_date_only
+
+                if delta.days < 0:
+                    return "Expired"
+                return delta.days
+            except Exception as e:
+                # Log the error if possible
+                if current_app:
+                    current_app.logger.error(
+                        f"Error calculating offer_expires_in_days for candidate {self.candidate_id}: {e}")
+                return None  # ή "Error"
+        return None
+
+    # ----------------------------------------------------
 
     def add_history_event(self, event_type: str, description: str, actor_id: int = None, actor_username: str = None,
                           details: dict = None):
@@ -294,7 +331,11 @@ class Candidate(db.Model):
             'notes': self.notes,
             'hr_comments': self.hr_comments,
             'candidate_confirmation_status': self.candidate_confirmation_status,
-            'positions': [pos.to_dict() for pos in self.positions.all()] if self.positions else []
+            'positions': [pos.to_dict() for pos in self.positions.all()] if self.positions else [],
+            # --- ΠΡΟΣΘΗΚΗ ΤΩΝ ΝΕΩΝ ΠΕΔΙΩΝ ΣΤΟ DICT ---
+            'offer_sent_at': self.offer_sent_at.isoformat() if self.offer_sent_at else None,
+            'offer_expires_in_days': self.offer_expires_in_days,
+            # ------------------------------------------
         }
         if include_company_info_for_candidate and self.company:
             data['company'] = self.company.to_dict()
@@ -303,7 +344,16 @@ class Candidate(db.Model):
                 data['cv_url'] = cv_url
             elif self.cv_storage_path:
                 try:
-                    data['cv_url'] = s3_service_instance.create_presigned_url(self.cv_storage_path)
+                    # Βεβαιώσου ότι το s3_service_instance είναι διαθέσιμο εδώ
+                    # Αν το s3_service_instance αρχικοποιείται στο app/__init__.py και περνιέται,
+                    # τότε θα πρέπει να το κάνεις import εδώ ή να έχεις πρόσβαση μέσω current_app.s3_service
+                    if s3_service_instance:  # Έλεγχos αν το s3_service_instance είναι None
+                        data['cv_url'] = s3_service_instance.create_presigned_url(self.cv_storage_path)
+                    else:
+                        if current_app:
+                            current_app.logger.warning(
+                                "s3_service_instance is None in Candidate.to_dict, cannot create presigned_url.")
+                        data['cv_url'] = None
                 except Exception as e:
                     if current_app:
                         current_app.logger.error(
@@ -320,9 +370,10 @@ class Candidate(db.Model):
                 interview.to_dict(
                     include_slots=True,
                     include_candidate_info=False,
+                    # True για να φαίνονται οι πληροφορίες του υποψηφίου μέσα στο interview object
                     include_recruiter_info=True,
                     include_position_info=True,
-                    include_company_info=True
+                    include_company_info=True  # True για να φαίνεται το όνομα της εταιρείας
                 ) for interview in interviews_list
             ]
         if include_branches:
@@ -331,26 +382,25 @@ class Candidate(db.Model):
 
 
 class Position(db.Model):
-    # ... (παραμένει ίδιο) ...
     __tablename__ = 'positions'
     position_id = db.Column(db.Integer, primary_key=True)
     company_id = db.Column(db.Integer, db.ForeignKey('companies.id', ondelete='CASCADE'), nullable=False)
     position_name = db.Column(db.String(150), nullable=False)
     description = db.Column(db.Text, nullable=True)
-    status = db.Column(db.String(50), default='Open', nullable=True)
+    status = db.Column(db.String(50), default='Open', nullable=True)  # Default 'Open'
     created_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(dt_timezone.utc))
     updated_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(dt_timezone.utc),
                            onupdate=lambda: datetime.now(dt_timezone.utc))
 
     candidates = db.relationship('Candidate', secondary=candidate_position_association, back_populates='positions',
                                  lazy='dynamic')
-    interviews = db.relationship('Interview', backref='position', lazy='select')
+    interviews = db.relationship('Interview', backref='position', lazy='select')  # Changed lazy to 'select'
 
     __table_args__ = (
         UniqueConstraint('position_name', 'company_id', name='uq_position_name_company_id'),
     )
 
-    def to_dict(self):
+    def to_dict(self):  # Changed to_dict_simple to to_dict
         return {
             'position_id': self.position_id,
             'company_id': self.company_id,
@@ -364,21 +414,19 @@ class Position(db.Model):
 
 
 class InterviewStatus(enum.Enum):
-    # ... (παραμένει ίδιο) ...
     PROPOSED = "PROPOSED"
     SCHEDULED = "SCHEDULED"
     COMPLETED = "COMPLETED"
     CANDIDATE_REJECTED_ALL = "CANDIDATE_REJECTED_ALL"
     CANCELLED_BY_RECRUITER = "CANCELLED_BY_RECRUITER"
     CANCELLED_BY_CANDIDATE = "CANCELLED_BY_CANDIDATE"
-    EXPIRED = "EXPIRED"
-    EVALUATION_POSITIVE = "EVALUATION_POSITIVE"
-    EVALUATION_NEGATIVE = "EVALUATION_NEGATIVE"
+    EXPIRED = "EXPIRED"  # e.g. proposal expired
+    EVALUATION_POSITIVE = "EVALUATION_POSITIVE"  # After interview, if feedback is positive
+    EVALUATION_NEGATIVE = "EVALUATION_NEGATIVE"  # After interview, if feedback is negative
     CANCELLED_DUE_TO_REEVALUATION = "CANCELLED_DUE_TO_REEVALUATION"
 
 
 class InterviewSlot(db.Model):
-    # ... (παραμένει ίδιο) ...
     __tablename__ = 'interview_slots'
     id = db.Column(db.Integer, primary_key=True)
     interview_id = db.Column(db.Integer, db.ForeignKey('interviews.id', ondelete='CASCADE'), nullable=False)
@@ -409,13 +457,13 @@ class Interview(db.Model):
     scheduled_end_time = db.Column(db.DateTime(timezone=True), nullable=True)
 
     location = db.Column(db.String(255), nullable=True)
-    interview_type = db.Column(db.String(50), nullable=True)
+    interview_type = db.Column(db.String(50), nullable=True)  # e.g., "Phone Screen", "Technical", "HR"
     notes_for_candidate = db.Column(db.Text, nullable=True)
-    internal_notes = db.Column(db.Text, nullable=True)
-    cancellation_reason_candidate = db.Column(db.Text, nullable=True)
+    internal_notes = db.Column(db.Text, nullable=True)  # Notes for the recruitment team
+    cancellation_reason_candidate = db.Column(db.Text, nullable=True)  # Reason if candidate cancels
 
-    evaluation_notes = db.Column(db.Text, nullable=True)
-    evaluation_rating_interview = db.Column(db.String(50), nullable=True)
+    evaluation_notes = db.Column(db.Text, nullable=True)  # Notes from the interview evaluation
+    evaluation_rating_interview = db.Column(db.String(50), nullable=True)  # Rating for this specific interview
 
     status = db.Column(db.Enum(InterviewStatus), default=InterviewStatus.PROPOSED, nullable=False, index=True)
 
@@ -429,18 +477,11 @@ class Interview(db.Model):
     updated_at = db.Column(db.DateTime(timezone=True), default=lambda: datetime.now(dt_timezone.utc),
                            onupdate=lambda: datetime.now(dt_timezone.utc))
 
-    # --- ΣΩΣΤΟΣ ΟΡΙΣΜΟΣ RELATIONSHIPS ---
-    # Το backref 'candidate' ορίζεται στο Candidate model: Candidate.interviews
-    # Το backref 'position' ορίζεται στο Position model: Position.interviews
-    # Το backref 'company' ορίζεται στο Company model: Company.interviews
-
     recruiter = db.relationship('User', foreign_keys=[recruiter_id],
                                 backref=db.backref('recruited_interviews', lazy='select'))
-    slots = db.relationship('InterviewSlot', backref='interview', lazy='select',
+    slots = db.relationship('InterviewSlot', backref='interview', lazy='select',  # Use 'select' or 'joined' as needed
                             cascade="all, delete-orphan",
-                            order_by="InterviewSlot.start_time")
-
-    # --- ΤΕΛΟΣ ΣΩΣΤΟΥ ΟΡΙΣΜΟΥ RELATIONSHIPS ---
+                            order_by="InterviewSlot.start_time")  # Order slots by start time
 
     def is_token_valid(self, token_type='confirmation'):
         now = datetime.now(dt_timezone.utc)
@@ -472,24 +513,25 @@ class Interview(db.Model):
             'scheduled_end_time': self.scheduled_end_time.isoformat() if self.scheduled_end_time else None,
             'location': self.location,
             'interview_type': self.interview_type,
-            'status': self.status.value if self.status else None,
+            'status': self.status.value if self.status else None,  # Send enum value
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }
         if include_candidate_info and self.candidate:
             data['candidate'] = {
                 'candidate_id': str(self.candidate.candidate_id),
-                'full_name': self.candidate.get_full_name(),
+                'full_name': self.candidate.get_full_name(),  # Use the property
                 'email': self.candidate.email,
-                'current_status': self.candidate.current_status,
+                'current_status': self.candidate.current_status,  # Candidate's overall status
                 'confirmation_status': self.candidate.candidate_confirmation_status
+                # Candidate's response to this interview
             }
         if include_recruiter_info and self.recruiter:
             data['recruiter'] = {
                 'id': self.recruiter.id,
                 'username': self.recruiter.username
             }
-        else:
+        else:  # Handle case where recruiter might be null (e.g., if SET NULL on delete)
             data['recruiter'] = {'username': 'N/A'}
 
         if include_position_info and self.position:
@@ -497,17 +539,18 @@ class Interview(db.Model):
                 'position_id': self.position.position_id,
                 'position_name': self.position.position_name
             }
-        else:
+        else:  # Handle case where position might be null
             data['position'] = {'position_name': 'N/A'}
 
-        if include_company_info and self.company:
+        if include_company_info and self.company:  # Ensure company object exists
             data['company_name'] = self.company.name
 
         if include_slots:
+            # Ensure slots are loaded if lazy='dynamic'
             slots_list = self.slots if isinstance(self.slots, list) else self.slots.all()
             data['slots'] = [slot.to_dict() for slot in slots_list]
 
-        if include_sensitive:
+        if include_sensitive:  # Fields typically for internal use or specific contexts
             data['internal_notes'] = self.internal_notes
             data['evaluation_notes'] = self.evaluation_notes
             data['notes_for_candidate'] = self.notes_for_candidate
@@ -517,8 +560,47 @@ class Interview(db.Model):
             data['token_expires_at'] = self.token_expiration.isoformat() if self.token_expiration else None
             data[
                 'cancellation_token_expires_at'] = self.cancellation_token_expiration.isoformat() if self.cancellation_token_expiration else None
-            data['evaluation_rating_interview'] = self.evaluation_rating_interview
+            data['evaluation_rating_interview'] = self.evaluation_rating_interview  # Rating for this specific interview
         return data
 
 
+# --- EVENT LISTENER ΓΙΑ Candidate.current_status ---
+@event.listens_for(Candidate.current_status, 'set', propagate=True)
+def candidate_current_status_set_listener(target: Candidate, value: str, oldvalue: str, initiator):
+    """
+    Όταν το current_status ενός Candidate αλλάζει:
+    1. Ενημερώνει το status_last_changed_date.
+    2. Αν το νέο status είναι 'OfferMade', θέτει το offer_sent_at στην τρέχουσα ώρα UTC.
+       Αυτό γίνεται μόνο αν το παλιό status δεν ήταν 'OfferMade' ή αν το offer_sent_at είναι None,
+       για να μην το ξανα-ορίσει αν ο χρήστης αλλάζει κάτι άλλο ενώ είναι ήδη OfferMade.
+    3. Αν το παλιό status ήταν 'OfferMade' και το νέο status ΔΕΝ είναι 'OfferMade',
+       καθαρίζει το offer_sent_at.
+    """
+    # Έλεγχος για να αποφύγουμε την εκτέλεση κατά την αρχική φόρτωση από τη βάση
+    # ή αν το target δεν είναι instance του Candidate (π.χ. σε bulk updates που δεν το υποστηρίζουν)
+    if not isinstance(target, Candidate) or not instance_state(target).has_identity:
+        return
+
+    now_utc = datetime.now(dt_timezone.utc)
+
+    # Έλεγχος αν το πεδίο status_last_changed_date υπάρχει πριν την ανάθεση
+    if hasattr(target, 'status_last_changed_date'):
+        target.status_last_changed_date = now_utc
+    else:
+        # Αυτό δεν θα έπρεπε να συμβεί αν το model είναι σωστά ορισμένο.
+        # Πρόσθεσε logging αν χρειάζεται.
+        if current_app:
+            current_app.logger.warning(
+                f"Candidate {target.candidate_id} is missing 'status_last_changed_date' attribute.")
+
+    if value == 'OfferMade':
+        if oldvalue != 'OfferMade' or target.offer_sent_at is None:
+            target.offer_sent_at = now_utc
+    elif oldvalue == 'OfferMade' and value != 'OfferMade':
+        target.offer_sent_at = None
+
+
+# ----------------------------------------------------
+
 print("Models.py loaded (Branch model and associations added, Interview relationships fully defined and corrected).")
+

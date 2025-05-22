@@ -1,7 +1,7 @@
 // frontend/src/components/CandidateList.jsx
 import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import apiClient from '../api';
+import apiClient from '../api'; // Βεβαιώσου ότι το import path είναι σωστό
 import './CandidateList.css';
 
 // Helper για την κατάσταση επιβεβαίωσης συνέντευξης (από CandidateDetailPage)
@@ -9,11 +9,11 @@ const getCandidateConfirmationStatusInfo = (confirmationStatus) => {
     if (!confirmationStatus) return null; // Επιστροφή null αν δεν υπάρχει status
     switch (confirmationStatus) {
         case 'Confirmed': return { text: 'Confirmed', className: 'status-confirmed' };
-        case 'DeclinedSlots': return { text: 'Declined Slots', className: 'status-declined-slots' };
-        case 'CancelledByUser': return { text: 'Cand. Cancelled', className: 'status-cancelled-user' }; // Συντομευμένο
-        case 'RecruiterCancelled': return { text: 'Rec. Cancelled', className: 'status-cancelled-recruiter' }; // Συντομευμένο
-        case 'Pending': return { text: 'Pending Resp.', className: 'status-pending' }; // Συντομευμένο
-        default: return { text: confirmationStatus, className: 'status-unknown' }; // Εμφάνισε το status αν είναι κάτι άλλο
+        case 'DeclinedSlots': return { text: 'Declined Slots', className: 'status-declined-slots' }; // Μπορεί να θες άλλο class name
+        case 'CancelledByUser': return { text: 'Cand. Cancelled', className: 'status-cancelled-user' };
+        case 'RecruiterCancelled': return { text: 'Rec. Cancelled', className: 'status-cancelled-recruiter' };
+        case 'Pending': return { text: 'Pending Resp.', className: 'status-pending' };
+        default: return { text: confirmationStatus, className: 'status-unknown' };
     }
 };
 
@@ -25,7 +25,7 @@ const RATING_OPTIONS_FOR_DISPLAY = [
     { value: 'Metrio', label: 'Μέτριο', order: 4 },
     { value: 'Kako', label: 'Κακό', order: 5 },
     { value: 'Polu Kako', label: 'Πολύ Κακό', order: 6 },
-    { value: '', label: '-', order: 99 },
+    { value: '', label: '-', order: 99 }, // Για κενές τιμές ή N/A
 ];
 
 const getRatingLabelForList = (value) => {
@@ -35,7 +35,7 @@ const getRatingLabelForList = (value) => {
 
 const getRatingOrder = (value) => {
     const option = RATING_OPTIONS_FOR_DISPLAY.find(opt => opt.value === value);
-    return option ? option.order : 99;
+    return option ? option.order : 99; // Βάζει τα κενά/N/A στο τέλος
 };
 
 const formatObjectListNames = (objectList, nameKey = 'name') => {
@@ -49,9 +49,10 @@ const formatObjectListNames = (objectList, nameKey = 'name') => {
 const formatInterviewDate = (isoString) => {
     if (!isoString) return '-';
     try {
-        return new Date(isoString).toLocaleString([], {
-            month: 'numeric', day: 'numeric',
-            hour: '2-digit', minute: '2-digit' // Πιο σύντομη μορφή για τη λίστα
+        return new Date(isoString).toLocaleString([], { // Uses browser's default locale
+            month: 'numeric', day: 'numeric', // Πιο σύντομη μορφή
+            hour: '2-digit', minute: '2-digit', // Ώρα
+            // hour12: false // Αν θέλεις 24ωρη μορφή
         });
     } catch { return 'Invalid Date'; }
 };
@@ -65,13 +66,14 @@ function CandidateList({ candidates, listTitle = "Candidates", onCandidateDelete
   };
 
   const handleDeleteCandidate = async (candidateId, candidateName, event) => {
-    event.stopPropagation();
+    event.stopPropagation(); // Για να μην κάνει trigger το handleRowClick
     if (window.confirm(`Are you sure you want to permanently delete candidate: ${candidateName || candidateId}? This action cannot be undone.`)) {
       try {
         await apiClient.delete(`/candidate/${candidateId}`);
         if (onCandidateDeleted) {
-          onCandidateDeleted(candidateId);
+          onCandidateDeleted(candidateId); // Ενημέρωσε το γονικό component
         }
+        // alert(`Candidate ${candidateName || candidateId} deleted successfully.`);
       } catch (err) {
         console.error("Error deleting candidate:", err);
         alert(err.response?.data?.error || "Failed to delete candidate. Please try again.");
@@ -96,49 +98,64 @@ function CandidateList({ candidates, listTitle = "Candidates", onCandidateDelete
       sortableItems.sort((a, b) => {
         let valA, valB;
 
-        // Ειδικός χειρισμός για πεδία που μπορεί να είναι σε related objects
         if (sortConfig.key === 'interview_date') {
-            const latestInterviewA = a.interviews?.find(iv => iv.status === 'SCHEDULED');
-            valA = latestInterviewA?.scheduled_start_time ? new Date(latestInterviewA.scheduled_start_time) : new Date(0);
-            const latestInterviewB = b.interviews?.find(iv => iv.status === 'SCHEDULED');
+            const latestInterviewA = a.interviews?.find(iv => iv.status === 'SCHEDULED' && iv.scheduled_start_time);
+            valA = latestInterviewA?.scheduled_start_time ? new Date(latestInterviewA.scheduled_start_time) : new Date(0); // Treat no date as very old
+            const latestInterviewB = b.interviews?.find(iv => iv.status === 'SCHEDULED' && iv.scheduled_start_time);
             valB = latestInterviewB?.scheduled_start_time ? new Date(latestInterviewB.scheduled_start_time) : new Date(0);
         } else if (sortConfig.key === 'confirmation') {
             valA = a.candidate_confirmation_status || '';
             valB = b.candidate_confirmation_status || '';
-        } else {
+        }
+        // --- ΠΡΟΣΘΗΚΗ ΓΙΑ ΤΑΞΙΝΟΜΗΣΗ OFFER EXPIRES ---
+        else if (sortConfig.key === 'offer_expires_in_days') {
+            const normalizeExpiry = (val) => {
+                if (val === "Expired") return -1; // Βάλε τα Expired στην αρχή (ή στο τέλος αν θες > 0)
+                if (val === null || val === undefined || typeof val !== 'number') return Infinity; // Βάλε τα null/undefined/non-numeric στο τέλος
+                return Number(val);
+            };
+            valA = normalizeExpiry(a.offer_expires_in_days);
+            valB = normalizeExpiry(b.offer_expires_in_days);
+        }
+        // ------------------------------------------
+        else { // Default case for other keys
             valA = a[sortConfig.key];
             valB = b[sortConfig.key];
         }
 
+        // Specific type handling for sorting
         if (sortConfig.key === 'evaluation_rating') {
             valA = getRatingOrder(a.evaluation_rating);
             valB = getRatingOrder(b.evaluation_rating);
-        } else if (sortConfig.key === 'submission_date' || sortConfig.key === 'interview_date') { // 'interview_date' χειρίζεται παραπάνω
-            if (sortConfig.key !== 'interview_date') { // Για submission_date
+        } else if (['submission_date', 'status_last_changed_date'].includes(sortConfig.key) || (sortConfig.key === 'interview_date')) {
+             // interview_date is already a Date object or Date(0)
+             if (sortConfig.key !== 'interview_date') {
                  valA = a[sortConfig.key] ? new Date(a[sortConfig.key]) : new Date(0);
                  valB = b[sortConfig.key] ? new Date(b[sortConfig.key]) : new Date(0);
-            }
-            if (valA && isNaN(valA.getTime())) valA = new Date(0);
-            if (valB && isNaN(valB.getTime())) valB = new Date(0);
+             }
+             // Ensure valid dates for comparison
+             if (valA && isNaN(valA.getTime())) valA = new Date(0);
+             if (valB && isNaN(valB.getTime())) valB = new Date(0);
         } else if (sortConfig.key === 'positions') {
             valA = (a.positions && a.positions.length > 0 && a.positions[0].position_name) ? a.positions[0].position_name.toLowerCase() : '';
             valB = (b.positions && b.positions.length > 0 && b.positions[0].position_name) ? b.positions[0].position_name.toLowerCase() : '';
         } else if (sortConfig.key === 'branches') {
             valA = (a.branches && a.branches.length > 0 && a.branches[0].name) ? a.branches[0].name.toLowerCase() : '';
             valB = (b.branches && b.branches.length > 0 && b.branches[0].name) ? b.branches[0].name.toLowerCase() : '';
-        } else if (typeof valA === 'string' && typeof valB === 'string') {
+        } else if (typeof valA === 'string' && typeof valB === 'string' && sortConfig.key !== 'offer_expires_in_days') { // Don't lowercase numeric expiry days
             valA = valA.toLowerCase();
             valB = valB.toLowerCase();
         }
 
-        // Χειρισμός null/undefined για αριθμητικές/ημερομηνίες μετά τη μετατροπή
-        if (valA === null || valA === undefined || (valA instanceof Date && valA.getTime() === new Date(0).getTime())) {
-            return sortConfig.direction === 'ascending' ? 1 : -1; // Βάζει τα null/κενά στο τέλος όταν ανεβαίνει
+        // Handle nulls/undefineds for non-date, non-expiry fields to sort them consistently
+        if (sortConfig.key !== 'offer_expires_in_days' && !(valA instanceof Date) && !(valB instanceof Date)) {
+             if (valA === null || valA === undefined || valA === '') {
+                 return sortConfig.direction === 'ascending' ? 1 : -1;
+             }
+             if (valB === null || valB === undefined || valB === '') {
+                 return sortConfig.direction === 'ascending' ? -1 : 1;
+             }
         }
-        if (valB === null || valB === undefined || (valB instanceof Date && valB.getTime() === new Date(0).getTime())) {
-            return sortConfig.direction === 'ascending' ? -1 : 1; // Βάζει τα null/κενά στην αρχή όταν ανεβαίνει
-        }
-
 
         if (valA < valB) return sortConfig.direction === 'ascending' ? -1 : 1;
         if (valA > valB) return sortConfig.direction === 'ascending' ? 1 : -1;
@@ -156,7 +173,7 @@ function CandidateList({ candidates, listTitle = "Candidates", onCandidateDelete
   };
 
   if (!candidates || candidates.length === 0) {
-    return null;
+    return null; // Ή ένα μήνυμα "No candidates found"
   }
 
   return (
@@ -170,6 +187,9 @@ function CandidateList({ candidates, listTitle = "Candidates", onCandidateDelete
               <th onClick={() => requestSort('positions')} className="sortable-header">Position(s){getSortIndicator('positions')}</th>
               <th onClick={() => requestSort('branches')} className="sortable-header">Branch(es){getSortIndicator('branches')}</th>
               <th onClick={() => requestSort('evaluation_rating')} className="sortable-header" style={{textAlign: 'center'}}>Rating (HR){getSortIndicator('evaluation_rating')}</th>
+              {/* --- ΝΕΑ ΣΤΗΛΗ ΓΙΑ OFFER EXPIRY --- */}
+              <th onClick={() => requestSort('offer_expires_in_days')} className="sortable-header" style={{textAlign: 'center'}}>Offer Expires In{getSortIndicator('offer_expires_in_days')}</th>
+              {/* ------------------------------------ */}
               <th onClick={() => requestSort('interview_date')} className="sortable-header">Interview Date{getSortIndicator('interview_date')}</th>
               <th onClick={() => requestSort('confirmation')} className="sortable-header">Confirmation{getSortIndicator('confirmation')}</th>
               <th onClick={() => requestSort('current_status')} className="sortable-header">Status{getSortIndicator('current_status')}</th>
@@ -178,13 +198,9 @@ function CandidateList({ candidates, listTitle = "Candidates", onCandidateDelete
           </thead>
           <tbody>
             {sortedCandidates.map((candidate) => {
-              // Βρες την πιο πρόσφατη προγραμματισμένη συνέντευξη (αν υπάρχει)
-              // Υποθέτουμε ότι το backend στέλνει τις συνεντεύξεις ταξινομημένες (π.χ. created_at desc)
-              // ή μπορούμε να τις ταξινομήσουμε εδώ. Για απλότητα, παίρνουμε την πρώτη SCHEDULED.
               const latestScheduledInterview = candidate.interviews?.find(
                 (iv) => iv.status === 'SCHEDULED' && iv.scheduled_start_time
               );
-
               const confirmationInfo = getCandidateConfirmationStatusInfo(candidate.candidate_confirmation_status);
 
               return (
@@ -195,6 +211,23 @@ function CandidateList({ candidates, listTitle = "Candidates", onCandidateDelete
                   <td style={{textAlign: 'center', fontWeight: 'bold'}}>
                     {getRatingLabelForList(candidate.evaluation_rating)}
                   </td>
+                  {/* --- ΕΜΦΑΝΙΣΗ ΤΗΣ ΤΙΜΗΣ ΓΙΑ OFFER EXPIRY --- */}
+                  <td style={{ textAlign: 'center' }}>
+                    {candidate.current_status === 'OfferMade' ? 
+                        (candidate.offer_expires_in_days !== null && candidate.offer_expires_in_days !== undefined ? 
+                            (String(candidate.offer_expires_in_days).toLowerCase() === "expired" ? 
+                                <span style={{ color: 'var(--danger-color)', fontWeight: 'bold' }}>Expired</span> :
+                                (typeof candidate.offer_expires_in_days === 'number' ?
+                                    `${candidate.offer_expires_in_days} day(s)` :
+                                    candidate.offer_expires_in_days // Εμφάνισε την τιμή ως έχει αν δεν είναι αριθμός ή "Expired"
+                                )
+                            ) : 
+                            'N/A' // Δεν υπάρχει τιμή από το backend
+                        ) : 
+                        '-' // Δεν είναι στο status OfferMade
+                    }
+                  </td>
+                  {/* ----------------------------------------- */}
                   <td>
                     {latestScheduledInterview
                       ? formatInterviewDate(latestScheduledInterview.scheduled_start_time)
@@ -203,13 +236,11 @@ function CandidateList({ candidates, listTitle = "Candidates", onCandidateDelete
                     {latestScheduledInterview && latestScheduledInterview.location && ` @ ${latestScheduledInterview.location}`}
                   </td>
                   <td>
-                    {/* Εμφάνισε το confirmation status του υποψηφίου αν υπάρχει προγραμματισμένη συνέντευξη */}
                     {latestScheduledInterview && confirmationInfo && confirmationInfo.text && (
                       <span className={`status-badge ${confirmationInfo.className}`}>
                         {confirmationInfo.text}
                       </span>
                     )}
-                    {/* Αν δεν υπάρχει προγραμματισμένη συνέντευξη αλλά υπάρχει γενικό confirmation status, δείξτο (λιγότερο πιθανό σενάριο) */}
                     {!latestScheduledInterview && confirmationInfo && confirmationInfo.text && (
                          <span className={`status-badge ${confirmationInfo.className}`}>
                             {confirmationInfo.text} (No Sched. IV)
